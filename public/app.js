@@ -8,6 +8,13 @@ const state = {
 };
 
 const $ = (selector) => document.querySelector(selector);
+const escapeHtml = (value = "") => String(value).replace(/[&<>"']/g, (char) => ({
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  "\"": "&quot;",
+  "'": "&#39;"
+})[char]);
 const money = (value) => `$${Number(value).toFixed(2)}`;
 const shortDate = (date) => new Intl.DateTimeFormat("en-US", {
   month: "short",
@@ -90,6 +97,101 @@ function latestByModel(rows) {
     if (!existing || new Date(row.observedAt) > new Date(existing.observedAt)) latest.set(row.gpuModel, row);
   }
   return [...latest.values()];
+}
+
+function monthKey(date) {
+  return new Date(date).toISOString().slice(0, 7);
+}
+
+function directObservationsFor(indexRow) {
+  const selectedMonth = monthKey(indexRow.observedAt);
+  return state.rates.filter((row) =>
+    row.gpuModel === indexRow.gpuModel &&
+    monthKey(row.observedAt) === selectedMonth
+  ).toSorted((a, b) => a.provider.localeCompare(b.provider) || a.pricePerGpuHour - b.pricePerGpuHour);
+}
+
+function providerSummaryFor(rows) {
+  const providers = new Map();
+  for (const row of rows) {
+    const current = providers.get(row.provider) || {
+      provider: row.provider,
+      providerType: row.providerType,
+      observations: 0,
+      sourceKinds: new Set(),
+      latestObservation: row.observedAt
+    };
+    current.observations += 1;
+    current.sourceKinds.add(row.sourceKind);
+    if (new Date(row.observedAt) > new Date(current.latestObservation)) current.latestObservation = row.observedAt;
+    providers.set(row.provider, current);
+  }
+  return [...providers.values()].toSorted((a, b) => a.provider.localeCompare(b.provider));
+}
+
+function sourceCard({ name, type, meta, href }) {
+  return `<div class="source-card">
+    <div class="source-top"><span class="source-name">${escapeHtml(name)}</span><span class="badge">${escapeHtml(type)}</span></div>
+    <div class="source-meta">${meta}</div>
+    ${href ? `<a class="source-link" href="${escapeHtml(href)}" target="_blank" rel="noopener">Open source</a>` : ""}
+  </div>`;
+}
+
+function showSourceDetails(indexRow) {
+  const directRows = directObservationsFor(indexRow);
+  const directProviders = providerSummaryFor(directRows);
+  const dialog = $("#sourceDialog");
+  $("#sourceDialogTitle").textContent = `${indexRow.gpuModel} · ${shortDate(indexRow.observedAt)}`;
+
+  const aggregateCard = sourceCard({
+    name: indexRow.sourceName,
+    type: "aggregate",
+    href: indexRow.sourceUrl,
+    meta: `${money(indexRow.pricePerGpuHour)} / GPU-hour<br>${escapeHtml(indexRow.aggregation.replaceAll("-", " "))}`
+  });
+  const directSourceCards = directProviders.map((provider) => sourceCard({
+    name: provider.provider,
+    type: provider.providerType,
+    meta: `${provider.observations} direct data point${provider.observations === 1 ? "" : "s"}<br>${escapeHtml([...provider.sourceKinds].join(", "))} · latest ${shortDate(provider.latestObservation)}`
+  })).join("");
+  const sourceList = directSourceCards || `<div class="empty-source">No direct provider observations have been collected for this GPU and month yet.</div>`;
+
+  const directTable = directRows.length ? `<div class="table-wrap">
+    <table>
+      <thead><tr><th>Provider</th><th>Type</th><th>Observed</th><th>Region</th><th>Rate</th><th>Kind</th><th>Source</th></tr></thead>
+      <tbody>${directRows.map((row) => `<tr>
+        <td><strong>${escapeHtml(row.provider)}</strong></td>
+        <td>${escapeHtml(row.providerType)}</td>
+        <td>${fullDate(row.observedAt)}</td>
+        <td>${escapeHtml(row.region)}</td>
+        <td class="rate">${money(row.pricePerGpuHour)}</td>
+        <td>${escapeHtml(row.sourceKind)}</td>
+        <td><a href="${escapeHtml(row.sourceUrl)}" target="_blank" rel="noopener">Open</a></td>
+      </tr>`).join("")}</tbody>
+    </table>
+  </div>` : `<div class="empty-source">Collect latest rates or import archive snapshots to add direct provider rows for this month.</div>`;
+
+  $("#sourceDialogBody").innerHTML = `
+    <section class="dialog-section">
+      <h3>Index data point</h3>
+      <div class="selected-point">
+        <span>${escapeHtml(indexRow.gpuModel)}</span>
+        <strong>${money(indexRow.pricePerGpuHour)}</strong>
+        <span>${fullDate(indexRow.observedAt)}</span>
+      </div>
+      <div class="sources compact">${aggregateCard}</div>
+    </section>
+    <section class="dialog-section">
+      <h3>Direct sources for the same GPU and month</h3>
+      <div class="sources compact">${sourceList}</div>
+    </section>
+    <section class="dialog-section">
+      <h3>Direct data points</h3>
+      ${directTable}
+    </section>
+  `;
+  if (typeof dialog.showModal === "function") dialog.showModal();
+  else dialog.setAttribute("open", "");
 }
 
 function render() {
@@ -204,7 +306,7 @@ function attachTooltips() {
     });
     point.addEventListener("click", () => {
       const row = JSON.parse(point.dataset.rate);
-      window.open(row.sourceUrl, "_blank", "noopener");
+      showSourceDetails(row);
     });
   });
 }
@@ -236,8 +338,11 @@ function renderTable(rows) {
     <td>${shortDate(row.observedAt)}</td>
     <td class="rate">${money(row.pricePerGpuHour)}</td>
     <td>Provider medians</td>
-    <td><a href="${row.sourceUrl}" target="_blank" rel="noopener">View ↗</a></td>
+    <td><button class="link-button" type="button" data-source-row='${JSON.stringify(row).replaceAll("'", "&#39;")}'>Inspect</button></td>
   </tr>`).join("") || `<tr><td colspan="6">No matching observations.</td></tr>`;
+  document.querySelectorAll("[data-source-row]").forEach((button) => {
+    button.addEventListener("click", () => showSourceDetails(JSON.parse(button.dataset.sourceRow)));
+  });
 }
 
 $("#gpuFilter").addEventListener("change", render);
@@ -292,6 +397,11 @@ $("#archiveForm").addEventListener("submit", async (event) => {
   } finally {
     button.disabled = false;
   }
+});
+
+$("#closeSourceDialog").addEventListener("click", () => $("#sourceDialog").close());
+$("#sourceDialog").addEventListener("click", (event) => {
+  if (event.target === event.currentTarget) event.currentTarget.close();
 });
 
 load().catch((error) => toast(error.message));

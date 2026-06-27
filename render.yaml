@@ -1,0 +1,44 @@
+envVarGroups:
+  - name: gpu-rate-index-secrets
+    envVars:
+      - key: CRON_SECRET
+        generateValue: true
+      - key: RESEND_API_KEY
+        sync: false
+      - key: REPORT_TO_EMAIL
+        sync: false
+      - key: REPORT_FROM_EMAIL
+        sync: false
+
+services:
+  - type: web
+    name: gpupricecheckr
+    runtime: node
+    plan: starter
+    region: oregon
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/meta
+    disk:
+      name: gpupricecheckr-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - fromGroup: gpu-rate-index-secrets
+      - key: DATA_DIR
+        value: /var/data
+      - key: NODE_VERSION
+        value: 22.16.0
+
+  - type: cron
+    name: gpupricecheckr-daily-report
+    runtime: node
+    schedule: "0 12 * * *"
+    buildCommand: npm install
+    startCommand: npm run daily-report
+    envVars:
+      - fromGroup: gpu-rate-index-secrets
+      - key: APP_BASE_URL
+        value: https://gpupricecheckr.onrender.com
+      - key: NODE_VERSION
+        value: 22.16.0

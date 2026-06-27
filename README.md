@@ -24,6 +24,33 @@ npm start
 
 Open [http://localhost:3000](http://localhost:3000).
 
+Set `DATA_DIR` to move the SQLite database outside the repo, for example to a persistent disk mount in production.
+
+## Deploy on Render
+
+This repo includes `render.yaml` for a Render Blueprint:
+
+- `gpupricecheckr` web service runs the app.
+- A 1 GB persistent disk is mounted at `/var/data`.
+- `DATA_DIR=/var/data` stores SQLite on that disk.
+- `gpupricecheckr-daily-report` cron job runs every day at 12:00 UTC and calls the web service.
+- `gpu-rate-index-secrets` shares `CRON_SECRET`, Resend, and report email settings between the web service and cron job.
+
+After creating the Blueprint in Render, set these secret values:
+
+- `RESEND_API_KEY`
+- `REPORT_TO_EMAIL`
+- `REPORT_FROM_EMAIL`
+
+If Render assigns a different public URL than `https://gpupricecheckr.onrender.com`, update the cron job's `APP_BASE_URL` environment variable to the actual web service URL.
+
+Mutation endpoints are protected when `CRON_SECRET` is set:
+
+```bash
+curl -X POST "$APP_BASE_URL/api/daily-report" \
+  -H "Authorization: Bearer $CRON_SECRET"
+```
+
 ## API
 
 - `GET /api/meta` — source, GPU, collection-run, and date-range metadata.
@@ -31,6 +58,7 @@ Open [http://localhost:3000](http://localhost:3000).
 - `GET /api/rates?gpu=H100&providerType=neocloud` — normalized observations.
 - `POST /api/scrape` — collect all current sources; pass `{"providers":["lambda"]}` to limit it.
 - `POST /api/archive` — import archived pages, e.g. `{"provider":"lambda","from":"2023-01","to":"2026-06","limit":24}`.
+- `POST /api/daily-report` — collect current sources and email a rate-change report.
 
 ## Production scheduling
 

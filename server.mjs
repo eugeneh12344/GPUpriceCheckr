@@ -11,8 +11,10 @@ import {
   seedBenchmarks,
   startRun
 } from "./src/db.mjs";
-import { importArchive, providerCatalog, scrapeProvider } from "./src/providers.mjs";
+import { collectProviders, summarizeCollection } from "./src/collection.mjs";
+import { importArchive, providerCatalog } from "./src/providers.mjs";
 import { modelIndex, modelIndexMetadata } from "./src/model-index.mjs";
+import { runDailyReport } from "./src/report.mjs";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = join(ROOT, "public");
@@ -38,6 +40,18 @@ async function body(req) {
   return chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
 }
 
+function isAuthorized(req) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return true;
+  return req.headers.authorization === `Bearer ${secret}` || req.headers["x-cron-secret"] === secret;
+}
+
+function requireAuth(req, res) {
+  if (isAuthorized(req)) return false;
+  json(res, 401, { error: "Unauthorized" });
+  return true;
+}
+
 async function api(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/rates") {
     return json(res, 200, listRates(Object.fromEntries(url.searchParams)));
@@ -49,24 +63,14 @@ async function api(req, res, url) {
     return json(res, 200, { metadata: modelIndexMetadata(), observations: modelIndex() });
   }
   if (req.method === "POST" && url.pathname === "/api/scrape") {
+    if (requireAuth(req, res)) return;
     const input = await body(req);
     const ids = input.providers?.length ? input.providers : providerCatalog().map((p) => p.id);
-    const results = [];
-    for (const id of ids) {
-      const runId = startRun(id);
-      try {
-        const rates = await scrapeProvider(id);
-        saveRates(rates);
-        finishRun(runId, "success", rates.length);
-        results.push({ provider: id, status: "success", records: rates.length });
-      } catch (error) {
-        finishRun(runId, "failed", 0, error.message);
-        results.push({ provider: id, status: "failed", message: error.message });
-      }
-    }
-    return json(res, 200, { results });
+    const results = await collectProviders(ids);
+    return json(res, 200, { results: summarizeCollection(results) });
   }
   if (req.method === "POST" && url.pathname === "/api/archive") {
+    if (requireAuth(req, res)) return;
     const input = await body(req);
     const runId = startRun(`${input.provider}:archive`);
     try {
@@ -78,6 +82,11 @@ async function api(req, res, url) {
       finishRun(runId, "failed", 0, error.message);
       return json(res, 422, { error: error.message });
     }
+  }
+  if (req.method === "POST" && url.pathname === "/api/daily-report") {
+    if (requireAuth(req, res)) return;
+    const input = await body(req);
+    return json(res, 200, await runDailyReport(input));
   }
   return json(res, 404, { error: "Not found" });
 }
