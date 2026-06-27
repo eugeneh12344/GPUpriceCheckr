@@ -39,6 +39,6 @@ services:
     envVars:
       - fromGroup: gpu-rate-index-secrets
       - key: APP_BASE_URL
-        value: https://gpupricecheckr.onrender.com
+        value: https://gpupricecheckr-i8kp.onrender.com
       - key: NODE_VERSION
         value: 22.16.0
