@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Track hyperscaler and neocloud GPU rental rates over time." />
+    <title>GPU Rental Rate Index</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/">
+        <span class="brand-mark">G</span>
+        <span>GPU Rental Rate Index</span>
+      </a>
+      <div class="top-actions">
+        <span id="freshness" class="freshness">Loading dataset…</span>
+        <button id="scrapeAll" class="button primary">Collect latest rates</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Compute market intelligence</p>
+          <h1>What does a GPU-hour cost?</h1>
+          <p class="lede">Compare normalized on-demand rental rates across hyperscalers and specialized GPU clouds, with every observation tied back to its source.</p>
+        </div>
+        <div class="hero-stat">
+          <span class="hero-stat-label">Market spread</span>
+          <strong id="marketSpread">—</strong>
+          <span id="marketSpreadNote">Select a GPU to compare</span>
+        </div>
+      </section>
+
+      <section class="controls panel">
+        <label>
+          <span>GPU cohort</span>
+          <select id="gpuFilter"></select>
+        </label>
+        <label>
+          <span>Aggregation</span>
+          <select id="aggregationFilter" disabled>
+            <option>Median across providers</option>
+          </select>
+        </label>
+        <label>
+          <span>Rate type</span>
+          <select id="commitmentFilter" disabled>
+            <option>On-demand</option>
+          </select>
+        </label>
+        <div class="segmented" aria-label="Date range">
+          <button data-months="6">6M</button>
+          <button data-months="12">1Y</button>
+          <button data-months="24" class="active">2Y</button>
+          <button data-months="0">All</button>
+        </div>
+      </section>
+
+      <section class="kpis">
+        <article class="kpi panel">
+          <span>Median model rate</span>
+          <strong id="medianRate">—</strong>
+          <small>latest month</small>
+        </article>
+        <article class="kpi panel">
+          <span>Lowest model</span>
+          <strong id="lowestRate">—</strong>
+          <small id="lowestProvider">—</small>
+        </article>
+        <article class="kpi panel">
+          <span>GPU models</span>
+          <strong id="providerCount">—</strong>
+          <small>shown in the chart</small>
+        </article>
+        <article class="kpi panel">
+          <span>Monthly points</span>
+          <strong id="observationCount">—</strong>
+          <small id="dateCoverage">—</small>
+        </article>
+      </section>
+
+      <section class="chart-panel panel">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Historical rates</p>
+            <h2 id="chartTitle">Cross-provider price by GPU model</h2>
+          </div>
+          <div id="legend" class="legend"></div>
+        </div>
+        <div id="chart" class="chart" role="img" aria-label="Historical GPU rental price line chart"></div>
+        <p class="chart-note">Monthly on-demand median across provider-level medians, normalized to USD per physical GPU-hour. Source: <a href="https://aimultiple.com/gpu-index#price-trends-by-gpu-model" target="_blank" rel="noopener">AIMultiple GPU Index ↗</a></p>
+      </section>
+
+      <section class="lower-grid">
+        <article class="panel source-panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Collection network</p>
+              <h2>Sources</h2>
+            </div>
+          </div>
+          <div id="sources" class="sources"></div>
+        </article>
+        <article class="panel archive-panel">
+          <p class="eyebrow">Backfill</p>
+          <h2>Recover historical prices</h2>
+          <p>Replay archived versions of a provider’s pricing page through the same parser used for live collection.</p>
+          <form id="archiveForm">
+            <label>
+              <span>Provider</span>
+              <select id="archiveProvider"></select>
+            </label>
+            <div class="date-row">
+              <label><span>From</span><input id="archiveFrom" type="month" value="2023-01" /></label>
+              <label><span>To</span><input id="archiveTo" type="month" /></label>
+            </div>
+            <button class="button secondary" type="submit">Import archive snapshots</button>
+          </form>
+          <p id="archiveStatus" class="status"></p>
+        </article>
+      </section>
+
+      <section class="panel table-panel">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Audit trail</p>
+            <h2>Latest model index</h2>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>GPU</th><th>Cohort</th><th>Observed</th><th>Rate</th><th>Aggregation</th><th>Source</th></tr></thead>
+            <tbody id="ratesTable"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" aria-live="polite"></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
