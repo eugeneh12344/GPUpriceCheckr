@@ -158,6 +158,14 @@ export function finishRun(id, status, recordsFound, message = "") {
   `).run(new Date().toISOString(), status, recordsFound, message, id);
 }
 
+export function markInterruptedRuns() {
+  db.prepare(`
+    UPDATE scrape_runs
+    SET finished_at = ?, status = 'failed', message = 'Interrupted by process restart before completion.'
+    WHERE status = 'running' AND finished_at IS NULL
+  `).run(new Date().toISOString());
+}
+
 export function seedBenchmarks() {
   const existing = db.prepare("SELECT COUNT(*) AS count FROM rates").get().count;
   if (existing) return;

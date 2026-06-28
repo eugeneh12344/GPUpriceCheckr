@@ -6,6 +6,7 @@ import { dirname } from "node:path";
 import {
   finishRun,
   listRates,
+  markInterruptedRuns,
   metadata,
   saveRates,
   seedBenchmarks,
@@ -19,6 +20,7 @@ import { runDailyReport } from "./src/report.mjs";
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = join(ROOT, "public");
 const PORT = Number(process.env.PORT || 3000);
+markInterruptedRuns();
 seedBenchmarks();
 
 const MIME = {
