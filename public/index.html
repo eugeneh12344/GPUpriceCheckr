@@ -11,25 +11,36 @@
     <header class="topbar">
       <a class="brand" href="/">
         <span class="brand-mark">G</span>
-        <span>GPU Rental Rate Index</span>
+        <span>GPU Rent Price</span>
       </a>
       <div class="top-actions">
-        <span id="freshness" class="freshness">Loading dataset…</span>
-        <button id="scrapeAll" class="button primary">Collect latest rates</button>
+        <span id="freshness" class="freshness">Loading dataset...</span>
       </div>
     </header>
 
-    <main>
-      <section class="hero">
+    <main class="app-shell">
+      <section class="dashboard-hero">
         <div>
-          <p class="eyebrow">Compute market intelligence</p>
-          <h1>What does a GPU-hour cost?</h1>
-          <p class="lede">Compare normalized on-demand rental rates across hyperscalers and specialized GPU clouds, with every observation tied back to its source.</p>
-        </div>
-        <div class="hero-stat">
-          <span class="hero-stat-label">Market spread</span>
-          <strong id="marketSpread">—</strong>
-          <span id="marketSpreadNote">Select a GPU to compare</span>
+          <p class="eyebrow">Daily GPU rental intelligence</p>
+          <h1>GPU Rent Price Console</h1>
+          <div class="hero-metrics" aria-label="Market coverage">
+            <div>
+              <span>Observations</span>
+              <strong id="heroRows">--</strong>
+            </div>
+            <div>
+              <span>GPU Models</span>
+              <strong id="heroGpus">--</strong>
+            </div>
+            <div>
+              <span>Regions</span>
+              <strong id="heroRegions">--</strong>
+            </div>
+            <div>
+              <span>Sources</span>
+              <strong id="heroSources">--</strong>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -65,44 +76,82 @@
         </div>
       </section>
 
-      <section class="kpis">
-        <article class="kpi panel">
-          <span>Median model rate</span>
-          <strong id="medianRate">—</strong>
-          <small>latest month</small>
-        </article>
-        <article class="kpi panel">
-          <span>Lowest model</span>
-          <strong id="lowestRate">—</strong>
-          <small id="lowestProvider">—</small>
-        </article>
-        <article class="kpi panel">
-          <span>GPU models</span>
-          <strong id="providerCount">—</strong>
-          <small>shown in the chart</small>
-        </article>
-        <article class="kpi panel">
-          <span>Monthly points</span>
-          <strong id="observationCount">—</strong>
-          <small id="dateCoverage">—</small>
-        </article>
-      </section>
-
-      <section class="chart-panel panel">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Historical rates</p>
-            <h2 id="chartTitle">Cross-provider price by GPU model</h2>
-          </div>
-          <div id="legend" class="legend"></div>
-        </div>
-        <div id="chart" class="chart" role="img" aria-label="Historical GPU rental price line chart"></div>
-        <p class="chart-note">Monthly on-demand median across provider-level medians, normalized to USD per physical GPU-hour. Click any point to inspect its aggregate source and matching direct observations.</p>
-      </section>
-
-      <section class="lower-grid">
-        <article class="panel source-panel">
+      <section class="viz-grid" aria-label="GPU rental visualizations">
+        <article class="panel viz-panel trend-panel">
           <div class="section-heading">
+            <div>
+              <p class="eyebrow">Price trend</p>
+              <h2 id="chartTitle">Cross-provider price by GPU model</h2>
+            </div>
+            <div id="legend" class="legend"></div>
+          </div>
+          <div id="chart" class="chart" role="img" aria-label="Historical GPU rental price line chart"></div>
+        </article>
+
+        <article class="panel viz-panel movement-panel">
+          <div class="section-heading compact">
+            <div>
+              <p class="eyebrow">Movement matrix</p>
+              <h2>Average by chip</h2>
+            </div>
+          </div>
+          <div id="movementTable" class="movement-table"></div>
+        </article>
+
+        <article class="panel viz-panel heatmap-panel">
+          <div class="section-heading compact">
+            <div>
+              <p class="eyebrow">Geography</p>
+              <h2>Regional heat map</h2>
+            </div>
+          </div>
+          <div id="regionHeatmap" class="heatmap"></div>
+        </article>
+
+        <article class="panel viz-panel movers-panel">
+          <div class="section-heading compact">
+            <div>
+              <p class="eyebrow">Momentum</p>
+              <h2>Top movers</h2>
+            </div>
+          </div>
+          <div id="topMovers" class="mover-list"></div>
+        </article>
+
+        <article class="panel viz-panel cheapest-panel">
+          <div class="section-heading compact">
+            <div>
+              <p class="eyebrow">Best markets</p>
+              <h2>Cheapest regions</h2>
+            </div>
+          </div>
+          <div id="cheapestRegions" class="cheap-list"></div>
+        </article>
+
+        <article class="panel viz-panel spread-panel">
+          <div class="section-heading compact">
+            <div>
+              <p class="eyebrow">Providers</p>
+              <h2>Spread by chip</h2>
+            </div>
+          </div>
+          <div id="providerSpread" class="spread-list"></div>
+        </article>
+
+        <article class="panel viz-panel commitment-panel">
+          <div class="section-heading compact">
+            <div>
+              <p class="eyebrow">Terms</p>
+              <h2>Commitment discount</h2>
+            </div>
+          </div>
+          <div id="commitmentDiscounts" class="discount-list"></div>
+        </article>
+      </section>
+
+      <section class="ops-grid">
+        <article class="panel source-panel">
+          <div class="section-heading compact">
             <div>
               <p class="eyebrow">Collection network</p>
               <h2>Sources</h2>
@@ -110,27 +159,19 @@
           </div>
           <div id="sources" class="sources"></div>
         </article>
-        <article class="panel archive-panel">
-          <p class="eyebrow">Backfill</p>
-          <h2>Recover historical prices</h2>
-          <p>Replay archived versions of a provider’s pricing page through the same parser used for live collection.</p>
-          <form id="archiveForm">
-            <label>
-              <span>Provider</span>
-              <select id="archiveProvider"></select>
-            </label>
-            <div class="date-row">
-              <label><span>From</span><input id="archiveFrom" type="month" value="2023-01" /></label>
-              <label><span>To</span><input id="archiveTo" type="month" /></label>
+        <article class="panel schedule-panel">
+          <div class="section-heading compact">
+            <div>
+              <p class="eyebrow">Automation</p>
+              <h2>Collection status</h2>
             </div>
-            <button class="button secondary" type="submit">Import archive snapshots</button>
-          </form>
-          <p id="archiveStatus" class="status"></p>
+          </div>
+          <div id="runList" class="run-list"></div>
         </article>
       </section>
 
       <section class="panel table-panel">
-        <div class="section-heading">
+        <div class="section-heading compact">
           <div>
             <p class="eyebrow">Audit trail</p>
             <h2>Latest model index</h2>

@@ -84,13 +84,13 @@ multi-GPU trend charts instead of listing every collected observation.
 - `GET /api/meta` — source, GPU, region, commitment, collection-run, and date-range metadata.
 - `GET /api/model-index` — 199 monthly cross-provider observations for 10 GPU models.
 - `GET /api/rates?gpu=H100&providerType=neocloud&region=us-east-1&commitment=on-demand` — normalized observations.
-- `POST /api/scrape` — collect all current sources; pass `{"providers":["lambda"]}` to limit it.
-- `POST /api/archive` — import archived pages, e.g. `{"provider":"lambda","from":"2023-01","to":"2026-06","limit":24}`.
-- `POST /api/daily-report` — collect current sources and email a rate-change report.
+- `POST /api/scrape` — authenticated collection endpoint for cron and setup tasks; pass `{"providers":["lambda"]}` to limit it.
+- `POST /api/archive` — authenticated archived-page import, e.g. `{"provider":"lambda","from":"2023-01","to":"2026-06","limit":24}`.
+- `POST /api/daily-report` — authenticated daily collection and email report endpoint.
 
 ## Production scheduling
 
-Call `POST /api/scrape` daily or weekly from cron, GitHub Actions, or a serverless scheduler. Keep the SQLite file on persistent storage. Before exposing the app publicly, add authentication to mutation endpoints and honor each provider's robots.txt and terms.
+Render cron calls `POST /api/daily-report` with `CRON_SECRET` and can call `POST /api/scrape` with `COLLECT_ONLY=true` for provider-specific setup runs. Keep the SQLite file on persistent storage, keep mutation endpoints behind `CRON_SECRET`, and honor each provider's robots.txt and terms.
 
 ## Adding providers
 
