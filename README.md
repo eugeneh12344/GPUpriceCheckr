@@ -64,6 +64,17 @@ curl -X POST "$APP_BASE_URL/api/daily-report" \
   -H "Authorization: Bearer $CRON_SECRET"
 ```
 
+For one-provider setup checks, run the cron client in collection-only mode so it
+does not send a report email or re-pull every provider:
+
+```bash
+COLLECT_ONLY=true PROVIDERS=googleCloud npm run daily-report
+```
+
+`PROVIDERS` accepts a comma-separated list such as `aws,googleCloud,azure`.
+Without `COLLECT_ONLY=true`, the same provider filter sends a normal daily
+report email for only those providers.
+
 ## API
 
 - `GET /api/meta` — source, GPU, region, commitment, collection-run, and date-range metadata.
