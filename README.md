@@ -45,11 +45,11 @@ After creating the Blueprint in Render, set these secret values:
 - `REPORT_FROM_EMAIL`
 - `AWS_ACCESS_KEY_ID`
 - `AWS_SECRET_ACCESS_KEY`
-- `GOOGLE_CLOUD_API_KEY`
+- `GOOGLE_SERVICE_ACCOUNT_JSON`
 
 If Render assigns a different public URL than `https://gpupricecheckr.onrender.com`, update the cron job's `APP_BASE_URL` environment variable to the actual web service URL.
 
-Azure pricing does not require a secret key. AWS credentials only need permission to call the Pricing API actions `pricing:GetProducts` and `pricing:GetAttributeValues`; do not use an admin key. Google Cloud requires an API key with access to the Cloud Billing Catalog API.
+Azure pricing does not require a secret key. AWS credentials only need permission to call the Pricing API actions `pricing:GetProducts` and `pricing:GetAttributeValues`; do not use an admin key. Google Cloud requires a service account JSON key because the Cloud Billing Catalog API uses OAuth scopes rather than simple API-key auth for `services.skus.list`.
 
 By default, the hyperscaler collectors pull every available region returned by each pricing API. To limit collection during testing or reduce API volume, set comma-separated region allowlists:
 

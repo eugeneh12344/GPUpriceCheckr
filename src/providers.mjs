@@ -1,4 +1,4 @@
-import { createHash, createHmac } from "node:crypto";
+import { createHash, createHmac, createSign } from "node:crypto";
 
 const PROVIDERS = {
   lambda: {
@@ -31,7 +31,7 @@ const PROVIDERS = {
     type: "hyperscaler",
     url: "https://cloud.google.com/billing/docs/reference/rest/v1/services.skus/list",
     parser: null,
-    requiresEnv: ["GOOGLE_CLOUD_API_KEY"]
+    requiresEnv: ["GOOGLE_SERVICE_ACCOUNT_JSON"]
   },
   azure: {
     name: "Azure",
@@ -65,6 +65,8 @@ const GPU_ALIASES = [
 
 const AWS_PRICE_ENDPOINT = "https://api.pricing.us-east-1.amazonaws.com";
 const GOOGLE_COMPUTE_SERVICE = "6F81-5844-456A";
+const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
+const GOOGLE_BILLING_SCOPE = "https://www.googleapis.com/auth/cloud-billing.readonly";
 const DEFAULT_AWS_REGIONS = [
   "af-south-1",
   "ap-east-1",
@@ -254,6 +256,18 @@ function moneyValue(value) {
   return Number(value.units || 0) + Number(value.nanos || 0) / 1_000_000_000;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function base64Url(value) {
+  return Buffer.from(typeof value === "string" ? value : JSON.stringify(value))
+    .toString("base64")
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/g, "");
+}
+
 function termLabel(term = "") {
   if (/3\s*year|3yr/i.test(term)) return "3-year";
   if (/1\s*year|1yr/i.test(term)) return "1-year";
@@ -425,56 +439,66 @@ function awsCredentials() {
 }
 
 async function awsPricingRequest(target, body) {
-  const endpoint = new URL(AWS_PRICE_ENDPOINT);
-  const credentials = awsCredentials();
-  const now = new Date();
-  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
-  const dateStamp = amzDate.slice(0, 8);
-  const payload = JSON.stringify(body);
-  const headers = {
-    "content-type": "application/x-amz-json-1.1",
-    host: endpoint.host,
-    "x-amz-date": amzDate,
-    "x-amz-target": `AWSPriceListService.${target}`
-  };
-  if (credentials.sessionToken) headers["x-amz-security-token"] = credentials.sessionToken;
+  const requestDelayMs = Number(process.env.AWS_PRICE_REQUEST_DELAY_MS || 350);
+  for (let attempt = 1; attempt <= 8; attempt += 1) {
+    if (requestDelayMs) await sleep(requestDelayMs);
 
-  const signedHeaderNames = Object.keys(headers).sort();
-  const canonicalHeaders = signedHeaderNames.map((name) => `${name}:${headers[name]}\n`).join("");
-  const signedHeaders = signedHeaderNames.join(";");
-  const canonicalRequest = ["POST", "/", "", canonicalHeaders, signedHeaders, sha256(payload)].join("\n");
-  const credentialScope = `${dateStamp}/us-east-1/pricing/aws4_request`;
-  const stringToSign = [
-    "AWS4-HMAC-SHA256",
-    amzDate,
-    credentialScope,
-    sha256(canonicalRequest)
-  ].join("\n");
+    const endpoint = new URL(AWS_PRICE_ENDPOINT);
+    const credentials = awsCredentials();
+    const now = new Date();
+    const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
+    const dateStamp = amzDate.slice(0, 8);
+    const payload = JSON.stringify(body);
+    const headers = {
+      "content-type": "application/x-amz-json-1.1",
+      host: endpoint.host,
+      "x-amz-date": amzDate,
+      "x-amz-target": `AWSPriceListService.${target}`
+    };
+    if (credentials.sessionToken) headers["x-amz-security-token"] = credentials.sessionToken;
 
-  const signingKey = hmac(
-    hmac(
+    const signedHeaderNames = Object.keys(headers).sort();
+    const canonicalHeaders = signedHeaderNames.map((name) => `${name}:${headers[name]}\n`).join("");
+    const signedHeaders = signedHeaderNames.join(";");
+    const canonicalRequest = ["POST", "/", "", canonicalHeaders, signedHeaders, sha256(payload)].join("\n");
+    const credentialScope = `${dateStamp}/us-east-1/pricing/aws4_request`;
+    const stringToSign = [
+      "AWS4-HMAC-SHA256",
+      amzDate,
+      credentialScope,
+      sha256(canonicalRequest)
+    ].join("\n");
+
+    const signingKey = hmac(
       hmac(
-        hmac(`AWS4${credentials.secretAccessKey}`, dateStamp),
-        "us-east-1"
+        hmac(
+          hmac(`AWS4${credentials.secretAccessKey}`, dateStamp),
+          "us-east-1"
+        ),
+        "pricing"
       ),
-      "pricing"
-    ),
-    "aws4_request"
-  );
-  const signature = hmac(signingKey, stringToSign, "hex");
-  headers.authorization = `AWS4-HMAC-SHA256 Credential=${credentials.accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+      "aws4_request"
+    );
+    const signature = hmac(signingKey, stringToSign, "hex");
+    headers.authorization = `AWS4-HMAC-SHA256 Credential=${credentials.accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
 
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers,
-    body: payload,
-    signal: AbortSignal.timeout(60_000)
-  });
-  if (!response.ok) {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers,
+      body: payload,
+      signal: AbortSignal.timeout(60_000)
+    });
+    if (response.ok) return response.json();
+
     const text = await response.text();
+    const throttled = response.status === 429 || /Throttling|Rate exceeded/i.test(text);
+    if (throttled && attempt < 8) {
+      await sleep((2 ** attempt) * 1_000);
+      continue;
+    }
     throw new Error(`AWS Pricing API ${response.status}: ${text.slice(0, 240)}`);
   }
-  return response.json();
+  throw new Error("AWS Pricing API retries exhausted.");
 }
 
 async function awsAttributeValues(attributeName) {
@@ -678,21 +702,84 @@ function ratesFromGoogleSku(sku, observedAt, sourceUrl) {
   });
 }
 
-async function scrapeGoogleCloud(observedAt) {
-  const key = process.env.GOOGLE_CLOUD_API_KEY || process.env.GCP_API_KEY;
-  if (!key) {
-    throw new Error("Google Cloud pricing requires GOOGLE_CLOUD_API_KEY in Render environment variables.");
+function googleServiceAccount() {
+  const rawJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON || process.env.GCP_SERVICE_ACCOUNT_JSON;
+  if (rawJson) {
+    try {
+      const parsed = JSON.parse(rawJson);
+      if (parsed.client_email && parsed.private_key) return parsed;
+    } catch {
+      throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON is set but is not valid service-account JSON.");
+    }
   }
 
+  const clientEmail = process.env.GOOGLE_CLIENT_EMAIL || process.env.GCP_CLIENT_EMAIL;
+  const privateKey = process.env.GOOGLE_PRIVATE_KEY || process.env.GCP_PRIVATE_KEY;
+  if (clientEmail && privateKey) {
+    return {
+      client_email: clientEmail,
+      private_key: privateKey.replaceAll("\\n", "\n"),
+      token_uri: GOOGLE_TOKEN_URL
+    };
+  }
+
+  if (process.env.GOOGLE_CLOUD_API_KEY || process.env.GCP_API_KEY) {
+    throw new Error("Google Cloud Billing Catalog rejected API-key auth. Add GOOGLE_SERVICE_ACCOUNT_JSON for OAuth access.");
+  }
+  throw new Error("Google Cloud pricing requires GOOGLE_SERVICE_ACCOUNT_JSON in Render environment variables.");
+}
+
+async function googleAccessToken() {
+  const account = googleServiceAccount();
+  const tokenUrl = account.token_uri || GOOGLE_TOKEN_URL;
+  const now = Math.floor(Date.now() / 1_000);
+  const header = { alg: "RS256", typ: "JWT" };
+  const claims = {
+    iss: account.client_email,
+    scope: GOOGLE_BILLING_SCOPE,
+    aud: tokenUrl,
+    exp: now + 3_600,
+    iat: now
+  };
+  const unsigned = `${base64Url(header)}.${base64Url(claims)}`;
+  const signer = createSign("RSA-SHA256");
+  signer.update(unsigned);
+  signer.end();
+  const signature = signer.sign(account.private_key.replaceAll("\\n", "\n"), "base64")
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/g, "");
+  const assertion = `${unsigned}.${signature}`;
+
+  const response = await fetch(tokenUrl, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion
+    }),
+    signal: AbortSignal.timeout(30_000)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.access_token) {
+    throw new Error(`Google OAuth token request failed: ${data.error_description || data.error || response.statusText}`);
+  }
+  return data.access_token;
+}
+
+async function scrapeGoogleCloud(observedAt) {
+  const token = await googleAccessToken();
   const results = [];
   let pageToken;
   do {
     const url = new URL(`https://cloudbilling.googleapis.com/v1/services/${GOOGLE_COMPUTE_SERVICE}/skus`);
     url.searchParams.set("currencyCode", "USD");
     url.searchParams.set("pageSize", "5000");
-    url.searchParams.set("key", key);
     if (pageToken) url.searchParams.set("pageToken", pageToken);
-    const data = await fetchJsonWithRetry(url.toString(), 3, { timeoutMs: 60_000 });
+    const data = await fetchJsonWithRetry(url.toString(), 3, {
+      timeoutMs: 60_000,
+      headers: { authorization: `Bearer ${token}` }
+    });
     const sourceUrl = urlWithoutSecret(url.toString());
     for (const sku of data.skus || []) {
       results.push(...ratesFromGoogleSku(sku, observedAt, sourceUrl));
