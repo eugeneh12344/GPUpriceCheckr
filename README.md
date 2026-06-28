@@ -75,6 +75,10 @@ COLLECT_ONLY=true PROVIDERS=googleCloud npm run daily-report
 Without `COLLECT_ONLY=true`, the same provider filter sends a normal daily
 report email for only those providers.
 
+Daily report emails are digest-style: they summarize on-demand average prices by
+GPU, top exact-row movers, regional relative-price heatmaps, and compact
+multi-GPU trend charts instead of listing every collected observation.
+
 ## API
 
 - `GET /api/meta` — source, GPU, region, commitment, collection-run, and date-range metadata.
