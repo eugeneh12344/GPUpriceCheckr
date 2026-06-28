@@ -10,7 +10,7 @@ const response = await fetch(new URL("/api/daily-report", baseUrl), {
     authorization: `Bearer ${secret}`,
     "content-type": "application/json"
   },
-  body: JSON.stringify({})
+  body: JSON.stringify({ async: true })
 });
 const data = await response.json().catch(() => ({}));
 if (!response.ok) throw new Error(data.error || `Daily report failed with HTTP ${response.status}`);

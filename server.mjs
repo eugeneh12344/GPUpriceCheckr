@@ -86,6 +86,12 @@ async function api(req, res, url) {
   if (req.method === "POST" && url.pathname === "/api/daily-report") {
     if (requireAuth(req, res)) return;
     const input = await body(req);
+    if (input.async) {
+      runDailyReport({ ...input, async: undefined })
+        .then((result) => console.log(JSON.stringify({ dailyReport: result })))
+        .catch((error) => console.error(JSON.stringify({ dailyReportError: error.message })));
+      return json(res, 202, { status: "started" });
+    }
     return json(res, 200, await runDailyReport(input));
   }
   return json(res, 404, { error: "Not found" });
