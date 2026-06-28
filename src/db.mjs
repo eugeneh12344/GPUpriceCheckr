@@ -31,6 +31,10 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_rates_observed_at ON rates(observed_at);
   CREATE INDEX IF NOT EXISTS idx_rates_gpu_model ON rates(gpu_model);
   CREATE INDEX IF NOT EXISTS idx_rates_provider ON rates(provider);
+  CREATE INDEX IF NOT EXISTS idx_rates_exact_lookup
+    ON rates(provider, gpu_model, gpu_variant, region, commitment, observed_at);
+  CREATE INDEX IF NOT EXISTS idx_rates_filter_lookup
+    ON rates(gpu_model, observed_at, provider, region, commitment);
 
   CREATE TABLE IF NOT EXISTS scrape_runs (
     id INTEGER PRIMARY KEY,
@@ -116,6 +120,75 @@ export function listRates(filters = {}) {
     ${where}
     ORDER BY observed_at, provider, gpu_model, price_per_gpu_hour
   `).all(...values);
+}
+
+const DASHBOARD_RATE_COLUMNS = `
+  id, observed_at AS observedAt, provider, provider_type AS providerType,
+  gpu_model AS gpuModel, gpu_variant AS gpuVariant, region, commitment,
+  price_per_gpu_hour AS pricePerGpuHour, currency, source_url AS sourceUrl,
+  source_kind AS sourceKind
+`;
+
+const DASHBOARD_RATE_SELECT = `
+  id, observedAt, provider, providerType, gpuModel, gpuVariant, region,
+  commitment, pricePerGpuHour, currency, sourceUrl, sourceKind
+`;
+
+function dashboardExactRows(whereClause = "", values = [], rankLimit = 1) {
+  return db.prepare(`
+    WITH ranked AS (
+      SELECT ${DASHBOARD_RATE_COLUMNS},
+             ROW_NUMBER() OVER (
+               PARTITION BY provider, gpu_model, gpu_variant, region, commitment
+               ORDER BY observed_at DESC, id DESC
+             ) AS rank
+      FROM rates
+      ${whereClause}
+    )
+    SELECT ${DASHBOARD_RATE_SELECT}
+    FROM ranked
+    WHERE rank <= ?
+  `).all(...values, rankLimit);
+}
+
+function dashboardMonthlyRows() {
+  return db.prepare(`
+    WITH ranked AS (
+      SELECT ${DASHBOARD_RATE_COLUMNS},
+             ROW_NUMBER() OVER (
+               PARTITION BY substr(observed_at, 1, 7), provider, gpu_model, gpu_variant, region, commitment
+               ORDER BY observed_at DESC, id DESC
+             ) AS rank
+      FROM rates
+    )
+    SELECT ${DASHBOARD_RATE_SELECT}
+    FROM ranked
+    WHERE rank = 1
+  `).all();
+}
+
+export function dashboardRates(generatedAt = new Date()) {
+  const rowsById = new Map();
+  const addRows = (rows) => {
+    for (const row of rows) rowsById.set(row.id, row);
+  };
+
+  addRows(dashboardExactRows("", [], 2));
+  addRows(dashboardMonthlyRows());
+
+  for (const days of [1, 7, 30, 90, 365]) {
+    const cutoff = new Date(generatedAt.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
+    addRows(dashboardExactRows("WHERE observed_at <= ?", [cutoff], 1));
+  }
+
+  return [...rowsById.values()]
+    .map(({ id, ...row }) => row)
+    .toSorted((a, b) =>
+      new Date(a.observedAt) - new Date(b.observedAt) ||
+      a.provider.localeCompare(b.provider) ||
+      a.gpuModel.localeCompare(b.gpuModel) ||
+      a.pricePerGpuHour - b.pricePerGpuHour
+    );
 }
 
 export function metadata() {

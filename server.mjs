@@ -4,6 +4,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 import {
+  dashboardRates,
   finishRun,
   listRates,
   markInterruptedRuns,
@@ -55,6 +56,13 @@ function requireAuth(req, res) {
 }
 
 async function api(req, res, url) {
+  if (req.method === "GET" && url.pathname === "/api/dashboard") {
+    return json(res, 200, {
+      meta: { ...metadata(), catalog: providerCatalog() },
+      index: { metadata: modelIndexMetadata(), observations: modelIndex() },
+      rates: dashboardRates()
+    });
+  }
   if (req.method === "GET" && url.pathname === "/api/rates") {
     return json(res, 200, listRates(Object.fromEntries(url.searchParams)));
   }

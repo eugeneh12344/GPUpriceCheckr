@@ -142,15 +142,11 @@ function toast(message) {
 }
 
 async function load() {
-  const [meta, rates, index] = await Promise.all([
-    request("/api/meta"),
-    request("/api/rates"),
-    request("/api/model-index")
-  ]);
-  state.meta = meta;
-  state.rates = rates;
-  state.indexMeta = index.metadata;
-  state.observations = index.observations;
+  const dashboard = await request("/api/dashboard");
+  state.meta = dashboard.meta;
+  state.rates = dashboard.rates;
+  state.indexMeta = dashboard.index.metadata;
+  state.observations = dashboard.index.observations;
   populateControls();
   render();
 }
@@ -379,9 +375,25 @@ function monthKey(date) {
   return new Date(date).toISOString().slice(0, 7);
 }
 
-function directObservationsFor(indexRow) {
+function monthBounds(date) {
+  const observed = new Date(date);
+  const start = new Date(Date.UTC(observed.getUTCFullYear(), observed.getUTCMonth(), 1));
+  const end = new Date(Date.UTC(observed.getUTCFullYear(), observed.getUTCMonth() + 1, 1) - 1);
+  return { from: start.toISOString(), to: end.toISOString() };
+}
+
+async function directObservationsFor(indexRow) {
   const selectedMonth = monthKey(indexRow.observedAt);
-  return filteredDirectRates().filter((row) =>
+  const { from, to } = monthBounds(indexRow.observedAt);
+  const params = new URLSearchParams({ gpu: indexRow.gpuModel, from, to });
+  const provider = $("#providerFilter").value;
+  const region = $("#regionFilter").value;
+  const commitment = $("#commitmentFilter").value;
+  if (provider !== "all") params.set("provider", provider);
+  if (region !== "all") params.set("region", region);
+  if (commitment !== "all") params.set("commitment", commitment);
+  const rows = await request(`/api/rates?${params}`);
+  return rows.filter((row) =>
     row.gpuModel === indexRow.gpuModel &&
     monthKey(row.observedAt) === selectedMonth
   ).toSorted((a, b) => a.provider.localeCompare(b.provider) || a.pricePerGpuHour - b.pricePerGpuHour);
@@ -413,9 +425,7 @@ function sourceCard({ name, type, meta, href }) {
   </div>`;
 }
 
-function showSourceDetails(indexRow) {
-  const directRows = directObservationsFor(indexRow);
-  const directProviders = providerSummaryFor(directRows);
+async function showSourceDetails(indexRow) {
   const dialog = $("#sourceDialog");
   $("#sourceDialogTitle").textContent = `${indexRow.gpuModel} · ${shortDate(indexRow.observedAt)}`;
   const aggregateMeta = indexRow.directObservationCount
@@ -428,50 +438,69 @@ function showSourceDetails(indexRow) {
     href: indexRow.sourceUrl,
     meta: aggregateMeta
   });
-  const directSourceCards = directProviders.map((provider) => sourceCard({
-    name: provider.provider,
-    type: provider.providerType,
-    meta: `${provider.observations} direct data point${provider.observations === 1 ? "" : "s"}<br>${escapeHtml([...provider.sourceKinds].join(", "))} · latest ${shortDate(provider.latestObservation)}`
-  })).join("");
-  const sourceList = directSourceCards || `<div class="empty-source">No direct provider observations have been collected for this GPU and month yet.</div>`;
 
-  const directTable = directRows.length ? `<div class="table-wrap">
-    <table>
-      <thead><tr><th>Provider</th><th>Type</th><th>Observed</th><th>Region</th><th>Rate type</th><th>Rate</th><th>Kind</th><th>Source</th></tr></thead>
-      <tbody>${directRows.map((row) => `<tr>
-        <td><strong>${escapeHtml(row.provider)}</strong></td>
-        <td>${escapeHtml(row.providerType)}</td>
-        <td>${fullDate(row.observedAt)}</td>
-        <td>${escapeHtml(row.region)}</td>
-        <td>${escapeHtml(commitmentLabel(row.commitment))}</td>
-        <td class="rate">${money(row.pricePerGpuHour)}</td>
-        <td>${escapeHtml(row.sourceKind)}</td>
-        <td><a href="${escapeHtml(row.sourceUrl)}" target="_blank" rel="noopener">Open</a></td>
-      </tr>`).join("")}</tbody>
-    </table>
-  </div>` : `<div class="empty-source">Daily collection or archive imports will add direct provider rows for this month.</div>`;
+  const renderBody = (directRows, error) => {
+    const directProviders = directRows ? providerSummaryFor(directRows) : [];
+    const directSourceCards = directProviders.map((provider) => sourceCard({
+      name: provider.provider,
+      type: provider.providerType,
+      meta: `${provider.observations} direct data point${provider.observations === 1 ? "" : "s"}<br>${escapeHtml([...provider.sourceKinds].join(", "))} · latest ${shortDate(provider.latestObservation)}`
+    })).join("");
+    const sourceList = error
+      ? `<div class="empty-source">${escapeHtml(error.message)}</div>`
+      : directRows == null
+        ? `<div class="empty-source">Loading direct provider rows...</div>`
+        : directSourceCards || `<div class="empty-source">No direct provider observations have been collected for this GPU and month yet.</div>`;
 
-  $("#sourceDialogBody").innerHTML = `
-    <section class="dialog-section">
-      <h3>Index data point</h3>
-      <div class="selected-point">
-        <span>${escapeHtml(indexRow.gpuModel)}</span>
-        <strong>${money(indexRow.pricePerGpuHour)}</strong>
-        <span>${fullDate(indexRow.observedAt)}</span>
-      </div>
-      <div class="sources compact">${aggregateCard}</div>
-    </section>
-    <section class="dialog-section">
-      <h3>Direct sources for the same GPU and month</h3>
-      <div class="sources compact">${sourceList}</div>
-    </section>
-    <section class="dialog-section">
-      <h3>Direct data points</h3>
-      ${directTable}
-    </section>
-  `;
+    const directTable = error
+      ? `<div class="empty-source">${escapeHtml(error.message)}</div>`
+      : directRows == null
+        ? `<div class="empty-source">Loading direct data points...</div>`
+        : directRows.length ? `<div class="table-wrap">
+          <table>
+            <thead><tr><th>Provider</th><th>Type</th><th>Observed</th><th>Region</th><th>Rate type</th><th>Rate</th><th>Kind</th><th>Source</th></tr></thead>
+            <tbody>${directRows.map((row) => `<tr>
+              <td><strong>${escapeHtml(row.provider)}</strong></td>
+              <td>${escapeHtml(row.providerType)}</td>
+              <td>${fullDate(row.observedAt)}</td>
+              <td>${escapeHtml(row.region)}</td>
+              <td>${escapeHtml(commitmentLabel(row.commitment))}</td>
+              <td class="rate">${money(row.pricePerGpuHour)}</td>
+              <td>${escapeHtml(row.sourceKind)}</td>
+              <td><a href="${escapeHtml(row.sourceUrl)}" target="_blank" rel="noopener">Open</a></td>
+            </tr>`).join("")}</tbody>
+          </table>
+        </div>` : `<div class="empty-source">Daily collection or archive imports will add direct provider rows for this month.</div>`;
+
+    return `
+      <section class="dialog-section">
+        <h3>Index data point</h3>
+        <div class="selected-point">
+          <span>${escapeHtml(indexRow.gpuModel)}</span>
+          <strong>${money(indexRow.pricePerGpuHour)}</strong>
+          <span>${fullDate(indexRow.observedAt)}</span>
+        </div>
+        <div class="sources compact">${aggregateCard}</div>
+      </section>
+      <section class="dialog-section">
+        <h3>Direct sources for the same GPU and month</h3>
+        <div class="sources compact">${sourceList}</div>
+      </section>
+      <section class="dialog-section">
+        <h3>Direct data points</h3>
+        ${directTable}
+      </section>
+    `;
+  };
+
+  $("#sourceDialogBody").innerHTML = renderBody(null);
   if (typeof dialog.showModal === "function") dialog.showModal();
   else dialog.setAttribute("open", "");
+  try {
+    $("#sourceDialogBody").innerHTML = renderBody(await directObservationsFor(indexRow));
+  } catch (error) {
+    $("#sourceDialogBody").innerHTML = renderBody([], error);
+  }
 }
 
 function buildVisualData() {
