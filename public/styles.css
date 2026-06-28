@@ -59,7 +59,7 @@ h2 { margin: 0; font: 500 29px/1.1 Georgia, serif; letter-spacing: -.025em; }
 .hero-stat span:last-child { color: var(--muted); font-size: 12px; }
 
 .panel { background: var(--panel); border: 1px solid rgba(23, 26, 23, .1); border-radius: 18px; box-shadow: var(--shadow); }
-.controls { padding: 16px; display: grid; grid-template-columns: 1.2fr 1fr 1fr auto; gap: 12px; align-items: end; }
+.controls { padding: 16px; display: grid; grid-template-columns: 1.2fr 1fr 1fr 1fr 1fr auto; gap: 12px; align-items: end; }
 label { display: grid; gap: 7px; }
 label > span { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 select, input {

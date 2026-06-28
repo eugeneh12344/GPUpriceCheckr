@@ -89,6 +89,7 @@ export function listRates(filters = {}) {
     ["gpu_model", filters.gpu],
     ["provider", filters.provider],
     ["provider_type", filters.providerType],
+    ["region", filters.region],
     ["commitment", filters.commitment]
   ]) {
     if (value) {
@@ -124,13 +125,22 @@ export function metadata() {
     FROM rates GROUP BY provider ORDER BY provider_type, provider
   `).all();
   const gpus = db.prepare("SELECT DISTINCT gpu_model AS gpuModel FROM rates ORDER BY gpu_model").all();
+  const regions = db.prepare("SELECT DISTINCT region FROM rates ORDER BY region").all();
+  const commitments = db.prepare("SELECT DISTINCT commitment FROM rates ORDER BY commitment").all();
   const range = db.prepare("SELECT MIN(observed_at) AS first, MAX(observed_at) AS last, COUNT(*) AS count FROM rates").get();
   const runs = db.prepare(`
     SELECT provider, started_at AS startedAt, finished_at AS finishedAt, status,
            records_found AS recordsFound, message
     FROM scrape_runs ORDER BY id DESC LIMIT 20
   `).all();
-  return { providers, gpus: gpus.map((row) => row.gpuModel), range, runs };
+  return {
+    providers,
+    gpus: gpus.map((row) => row.gpuModel),
+    regions: regions.map((row) => row.region),
+    commitments: commitments.map((row) => row.commitment),
+    range,
+    runs
+  };
 }
 
 export function startRun(provider) {

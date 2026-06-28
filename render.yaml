@@ -9,6 +9,14 @@ envVarGroups:
         sync: false
       - key: REPORT_FROM_EMAIL
         sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_SESSION_TOKEN
+        sync: false
+      - key: GOOGLE_CLOUD_API_KEY
+        sync: false
 
 services:
   - type: web

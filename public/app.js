@@ -27,6 +27,30 @@ const fullDate = (date) => new Intl.DateTimeFormat("en-US", {
   year: "numeric",
   timeZone: "UTC"
 }).format(new Date(date));
+const GROUPS = {
+  "last-released": ["B200", "B300", "MI300X", "RTX 5090", "GB200", "GB300"],
+  modern: ["H100", "H200", "GH200", "A100", "L40S", "L40", "L4", "A10", "RTX 4090"],
+  legacy: ["V100", "P100", "T4"]
+};
+const groupLabels = { modern: "Modern", "last-released": "Latest", legacy: "Legacy", other: "Other" };
+
+function groupForGpu(gpuModel) {
+  return Object.entries(GROUPS).find(([, models]) => models.includes(gpuModel))?.[0] || "other";
+}
+
+function median(values) {
+  const sorted = values.filter((value) => Number.isFinite(value)).toSorted((a, b) => a - b);
+  if (!sorted.length) return null;
+  return sorted.length % 2
+    ? sorted[Math.floor(sorted.length / 2)]
+    : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2;
+}
+
+function commitmentLabel(value = "") {
+  return value
+    .replaceAll("-", " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
 
 async function request(url, options) {
   const response = await fetch(url, {
@@ -65,12 +89,38 @@ function populateControls() {
     ["all", "All 10 GPU models"],
     ["modern", "Modern · H100, H200, A100, L40S, RTX 4090"],
     ["last-released", "Latest · B200, B300, MI300X, RTX 5090"],
-    ["legacy", "Legacy · V100"]
+    ["legacy", "Legacy · V100, T4, P100"],
+    ["other", "Other collected GPUs"]
   ];
   const gpu = $("#gpuFilter");
   const current = gpu.value || "all";
   gpu.innerHTML = cohorts.map(([value, label]) => `<option value="${value}">${label}</option>`).join("");
   gpu.value = current;
+
+  const provider = $("#providerFilter");
+  const providerCurrent = provider.value || "all";
+  const providerNames = [...new Set([
+    ...state.meta.providers.map((row) => row.provider),
+    ...state.meta.catalog.map((row) => row.name)
+  ])].toSorted((a, b) => a.localeCompare(b));
+  provider.innerHTML = `<option value="all">All providers</option>${providerNames
+    .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
+    .join("")}`;
+  provider.value = [...provider.options].some((option) => option.value === providerCurrent) ? providerCurrent : "all";
+
+  const region = $("#regionFilter");
+  const regionCurrent = region.value || "all";
+  region.innerHTML = `<option value="all">All regions</option>${state.meta.regions
+    .map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`)
+    .join("")}`;
+  region.value = [...region.options].some((option) => option.value === regionCurrent) ? regionCurrent : "all";
+
+  const commitment = $("#commitmentFilter");
+  const commitmentCurrent = commitment.value || "all";
+  commitment.innerHTML = `<option value="all">All rate types</option>${state.meta.commitments
+    .map((value) => `<option value="${escapeHtml(value)}">${commitmentLabel(value)}</option>`)
+    .join("")}`;
+  commitment.value = [...commitment.options].some((option) => option.value === commitmentCurrent) ? commitmentCurrent : "all";
 
   const archive = $("#archiveProvider");
   archive.innerHTML = state.meta.catalog.filter((provider) => provider.archiveCapable)
@@ -80,13 +130,81 @@ function populateControls() {
 }
 
 function filteredObservations() {
+  const dataset = $("#datasetFilter").value;
   const cohort = $("#gpuFilter").value;
   const cutoff = state.months
     ? new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - state.months, 1))
     : new Date(0);
-  return state.observations.filter((row) =>
+  const observations = dataset === "direct" ? directIndexObservations() : state.observations;
+  $("#providerFilter").disabled = dataset !== "direct";
+  $("#regionFilter").disabled = dataset !== "direct";
+  $("#commitmentFilter").disabled = dataset !== "direct";
+  return observations.filter((row) =>
     (cohort === "all" || row.group === cohort) &&
     new Date(row.observedAt) >= cutoff
+  );
+}
+
+function filteredDirectRates() {
+  const provider = $("#providerFilter").value;
+  const region = $("#regionFilter").value;
+  const commitment = $("#commitmentFilter").value;
+  return state.rates.filter((row) =>
+    (provider === "all" || row.provider === provider) &&
+    (region === "all" || row.region === region) &&
+    (commitment === "all" || row.commitment === commitment)
+  );
+}
+
+function directIndexObservations() {
+  const groups = new Map();
+  for (const row of filteredDirectRates()) {
+    if (!Number.isFinite(Number(row.pricePerGpuHour))) continue;
+    const month = monthKey(row.observedAt);
+    const key = `${month}|${row.gpuModel}`;
+    const group = groups.get(key) || {
+      month,
+      gpuModel: row.gpuModel,
+      providerPrices: new Map(),
+      sourceUrls: new Set(),
+      regions: new Set(),
+      commitments: new Set(),
+      rows: 0
+    };
+    const providerRows = group.providerPrices.get(row.provider) || [];
+    providerRows.push(Number(row.pricePerGpuHour));
+    group.providerPrices.set(row.provider, providerRows);
+    group.sourceUrls.add(row.sourceUrl);
+    group.regions.add(row.region);
+    group.commitments.add(row.commitment);
+    group.rows += 1;
+    groups.set(key, group);
+  }
+
+  return [...groups.values()].flatMap((group) => {
+    const providerMedians = [...group.providerPrices.values()].map(median).filter((value) => value != null);
+    const price = median(providerMedians);
+    if (price == null) return [];
+    const providerCount = group.providerPrices.size;
+    const commitment = group.commitments.size === 1 ? [...group.commitments][0] : "mixed";
+    return [{
+      observedAt: `${group.month}-01T00:00:00.000Z`,
+      gpuModel: group.gpuModel,
+      group: groupForGpu(group.gpuModel),
+      pricePerGpuHour: price,
+      currency: "USD",
+      aggregation: "median-of-provider-medians",
+      billingType: commitment,
+      sourceName: "Collected Source Index",
+      sourceUrl: [...group.sourceUrls][0] || "",
+      directObservationCount: group.rows,
+      providerCount,
+      regionCount: group.regions.size,
+      commitment
+    }];
+  }).toSorted((a, b) =>
+    new Date(a.observedAt) - new Date(b.observedAt) ||
+    a.gpuModel.localeCompare(b.gpuModel)
   );
 }
 
@@ -105,7 +223,7 @@ function monthKey(date) {
 
 function directObservationsFor(indexRow) {
   const selectedMonth = monthKey(indexRow.observedAt);
-  return state.rates.filter((row) =>
+  return filteredDirectRates().filter((row) =>
     row.gpuModel === indexRow.gpuModel &&
     monthKey(row.observedAt) === selectedMonth
   ).toSorted((a, b) => a.provider.localeCompare(b.provider) || a.pricePerGpuHour - b.pricePerGpuHour);
@@ -142,12 +260,15 @@ function showSourceDetails(indexRow) {
   const directProviders = providerSummaryFor(directRows);
   const dialog = $("#sourceDialog");
   $("#sourceDialogTitle").textContent = `${indexRow.gpuModel} · ${shortDate(indexRow.observedAt)}`;
+  const aggregateMeta = indexRow.directObservationCount
+    ? `${money(indexRow.pricePerGpuHour)} / GPU-hour<br>${indexRow.directObservationCount} direct point${indexRow.directObservationCount === 1 ? "" : "s"} · ${indexRow.providerCount} provider${indexRow.providerCount === 1 ? "" : "s"} · ${indexRow.regionCount} region${indexRow.regionCount === 1 ? "" : "s"}`
+    : `${money(indexRow.pricePerGpuHour)} / GPU-hour<br>${escapeHtml(indexRow.aggregation.replaceAll("-", " "))}`;
 
   const aggregateCard = sourceCard({
     name: indexRow.sourceName,
     type: "aggregate",
     href: indexRow.sourceUrl,
-    meta: `${money(indexRow.pricePerGpuHour)} / GPU-hour<br>${escapeHtml(indexRow.aggregation.replaceAll("-", " "))}`
+    meta: aggregateMeta
   });
   const directSourceCards = directProviders.map((provider) => sourceCard({
     name: provider.provider,
@@ -158,12 +279,13 @@ function showSourceDetails(indexRow) {
 
   const directTable = directRows.length ? `<div class="table-wrap">
     <table>
-      <thead><tr><th>Provider</th><th>Type</th><th>Observed</th><th>Region</th><th>Rate</th><th>Kind</th><th>Source</th></tr></thead>
+      <thead><tr><th>Provider</th><th>Type</th><th>Observed</th><th>Region</th><th>Rate type</th><th>Rate</th><th>Kind</th><th>Source</th></tr></thead>
       <tbody>${directRows.map((row) => `<tr>
         <td><strong>${escapeHtml(row.provider)}</strong></td>
         <td>${escapeHtml(row.providerType)}</td>
         <td>${fullDate(row.observedAt)}</td>
         <td>${escapeHtml(row.region)}</td>
+        <td>${escapeHtml(commitmentLabel(row.commitment))}</td>
         <td class="rate">${money(row.pricePerGpuHour)}</td>
         <td>${escapeHtml(row.sourceKind)}</td>
         <td><a href="${escapeHtml(row.sourceUrl)}" target="_blank" rel="noopener">Open</a></td>
@@ -197,18 +319,14 @@ function showSourceDetails(indexRow) {
 function render() {
   const rows = filteredObservations();
   const latest = latestByModel(rows);
-  const prices = latest.map((row) => row.pricePerGpuHour).sort((a, b) => a - b);
-  const median = prices.length
-    ? prices.length % 2
-      ? prices[Math.floor(prices.length / 2)]
-      : (prices[prices.length / 2 - 1] + prices[prices.length / 2]) / 2
-    : null;
+  const modelMedian = median(latest.map((row) => row.pricePerGpuHour));
   const lowest = latest.toSorted((a, b) => a.pricePerGpuHour - b.pricePerGpuHour)[0];
   const highest = latest.toSorted((a, b) => b.pricePerGpuHour - a.pricePerGpuHour)[0];
   const cohortLabel = $("#gpuFilter").selectedOptions[0]?.textContent.split(" · ")[0] || "All models";
+  const datasetLabel = $("#datasetFilter").selectedOptions[0]?.textContent || "Collected source index";
 
-  $("#chartTitle").textContent = `${cohortLabel} · cross-provider price by GPU model`;
-  $("#medianRate").textContent = median == null ? "—" : money(median);
+  $("#chartTitle").textContent = `${cohortLabel} · ${datasetLabel}`;
+  $("#medianRate").textContent = modelMedian == null ? "—" : money(modelMedian);
   $("#lowestRate").textContent = lowest ? money(lowest.pricePerGpuHour) : "—";
   $("#lowestProvider").textContent = lowest?.gpuModel || "No matching data";
   $("#providerCount").textContent = new Set(rows.map((row) => row.gpuModel)).size;
@@ -291,7 +409,7 @@ function attachTooltips() {
       tooltip.innerHTML = `<strong>${row.gpuModel}</strong>
         ${money(row.pricePerGpuHour)} / GPU-hour<br>
         ${shortDate(row.observedAt)}<br>
-        <span style="color:#aeb6af">Median across provider medians</span>`;
+        <span style="color:#aeb6af">${escapeHtml(row.aggregation.replaceAll("-", " "))}</span>`;
       document.body.appendChild(tooltip);
       point.tooltip = tooltip;
     });
@@ -331,13 +449,12 @@ function renderSources() {
 
 function renderTable(rows) {
   const latest = latestByModel(rows).toSorted((a, b) => b.pricePerGpuHour - a.pricePerGpuHour);
-  const groupLabels = { modern: "Modern", "last-released": "Latest", legacy: "Legacy" };
   $("#ratesTable").innerHTML = latest.map((row) => `<tr>
     <td><strong>${row.gpuModel}</strong></td>
-    <td>${groupLabels[row.group]}</td>
+    <td>${groupLabels[row.group] || row.group}</td>
     <td>${shortDate(row.observedAt)}</td>
     <td class="rate">${money(row.pricePerGpuHour)}</td>
-    <td>Provider medians</td>
+    <td>${escapeHtml(row.aggregation.replaceAll("-", " "))}${row.directObservationCount ? ` · ${row.directObservationCount} rows` : ""}</td>
     <td><button class="link-button" type="button" data-source-row='${JSON.stringify(row).replaceAll("'", "&#39;")}'>Inspect</button></td>
   </tr>`).join("") || `<tr><td colspan="6">No matching observations.</td></tr>`;
   document.querySelectorAll("[data-source-row]").forEach((button) => {
@@ -345,7 +462,9 @@ function renderTable(rows) {
   });
 }
 
-$("#gpuFilter").addEventListener("change", render);
+["#gpuFilter", "#datasetFilter", "#providerFilter", "#regionFilter", "#commitmentFilter"].forEach((selector) => {
+  $(selector).addEventListener("change", render);
+});
 document.querySelectorAll("[data-months]").forEach((button) => {
   button.addEventListener("click", () => {
     document.querySelectorAll("[data-months]").forEach((item) => item.classList.remove("active"));

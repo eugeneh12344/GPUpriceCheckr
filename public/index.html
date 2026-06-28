@@ -39,16 +39,23 @@
           <select id="gpuFilter"></select>
         </label>
         <label>
-          <span>Aggregation</span>
-          <select id="aggregationFilter" disabled>
-            <option>Median across providers</option>
+          <span>Dataset</span>
+          <select id="datasetFilter">
+            <option value="direct">Collected source index</option>
+            <option value="aimultiple">AIMultiple benchmark</option>
           </select>
         </label>
         <label>
+          <span>Provider</span>
+          <select id="providerFilter"></select>
+        </label>
+        <label>
+          <span>Region</span>
+          <select id="regionFilter"></select>
+        </label>
+        <label>
           <span>Rate type</span>
-          <select id="commitmentFilter" disabled>
-            <option>On-demand</option>
-          </select>
+          <select id="commitmentFilter"></select>
         </label>
         <div class="segmented" aria-label="Date range">
           <button data-months="6">6M</button>
