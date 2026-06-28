@@ -4,7 +4,7 @@ const state = {
   indexMeta: null,
   observations: [],
   months: 24,
-  colors: ["#0f766e", "#f97316", "#2563eb", "#be123c", "#7c3aed", "#ca8a04", "#0891b2", "#4f46e5", "#db2777", "#475569"]
+  colors: ["#b7ff2a", "#7fb3ff", "#f7b041", "#53d769", "#b8c3d1", "#a78bfa", "#ff6b8a", "#7dd3fc", "#f2f4f8", "#34d399"]
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -26,6 +26,14 @@ const fullDate = (date) => new Intl.DateTimeFormat("en-US", {
   day: "numeric",
   year: "numeric",
   timeZone: "UTC"
+}).format(new Date(date));
+const fullDateTime = (date) => new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  timeZoneName: "short"
 }).format(new Date(date));
 const GROUPS = {
   "last-released": ["B200", "B300", "MI300X", "RTX 5090", "GB200", "GB300"],
@@ -99,6 +107,14 @@ function groupBy(values, keyFn) {
 function priorityIndex(gpuModel) {
   const index = GPU_PRIORITY.indexOf(gpuModel);
   return index === -1 ? GPU_PRIORITY.length : index;
+}
+
+function latestPriceTimestamp() {
+  const validRows = state.rates.filter((row) => Number.isFinite(new Date(row.observedAt).getTime()));
+  const liveRows = validRows.filter((row) => row.sourceKind === "live");
+  const sourceRows = liveRows.length ? liveRows : validRows.filter((row) => row.sourceKind !== "benchmark-seed");
+  const rows = sourceRows.length ? sourceRows : validRows;
+  return rows.toSorted((a, b) => new Date(b.observedAt) - new Date(a.observedAt))[0]?.observedAt || null;
 }
 
 function commitmentLabel(value = "") {
@@ -178,7 +194,10 @@ function populateControls() {
     .join("")}`;
   commitment.value = [...commitment.options].some((option) => option.value === commitmentCurrent) ? commitmentCurrent : "all";
 
-  $("#freshness").textContent = `Index updated ${fullDate(state.indexMeta.publishedAt)} · ${state.indexMeta.observationCount} monthly points`;
+  const latestPricePull = latestPriceTimestamp();
+  $("#freshness").textContent = latestPricePull
+    ? `Prices pulled ${fullDateTime(latestPricePull)}`
+    : `Index updated ${fullDate(state.indexMeta.publishedAt)} · ${state.indexMeta.observationCount} monthly points`;
 }
 
 function filteredObservations() {
