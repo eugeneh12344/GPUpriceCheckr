@@ -83,7 +83,8 @@ multi-GPU trend charts instead of listing every collected observation.
 
 - `GET /api/meta` — source, GPU, region, commitment, collection-run, and date-range metadata.
 - `GET /api/model-index` — 199 monthly cross-provider observations for 10 GPU models.
-- `GET /api/dashboard` — compact homepage payload with metadata, model index observations, and summarized direct-rate rows.
+- `GET /api/dashboard` — fast homepage payload with metadata, model index metadata, and precomputed dashboard panels.
+- `GET /api/dashboard-rates` — deferred compact direct-rate rows for interactive filters.
 - `GET /api/rates?gpu=H100&providerType=neocloud&region=us-east-1&commitment=on-demand` — normalized observations.
 - `POST /api/scrape` — authenticated collection endpoint for cron and setup tasks; pass `{"providers":["lambda"]}` to limit it.
 - `POST /api/archive` — authenticated archived-page import, e.g. `{"provider":"lambda","from":"2023-01","to":"2026-06","limit":24}`.

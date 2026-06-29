@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
+import { brotliCompressSync, constants as zlibConstants, gzipSync } from "node:zlib";
 import {
   dashboardRates,
   finishRun,
@@ -14,6 +15,7 @@ import {
   startRun
 } from "./src/db.mjs";
 import { collectProviders, summarizeCollection } from "./src/collection.mjs";
+import { buildDashboardSummary } from "./src/dashboard.mjs";
 import { importArchive, providerCatalog } from "./src/providers.mjs";
 import { modelIndex, modelIndexMetadata } from "./src/model-index.mjs";
 import { runDailyReport } from "./src/report.mjs";
@@ -21,6 +23,11 @@ import { runDailyReport } from "./src/report.mjs";
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = join(ROOT, "public");
 const PORT = Number(process.env.PORT || 3000);
+const DASHBOARD_CACHE_MS = 5 * 60 * 1000;
+const BROTLI_OPTIONS = { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 4 } };
+const GZIP_OPTIONS = { level: 6 };
+let dashboardCache = null;
+let dashboardRatesCache = null;
 markInterruptedRuns();
 seedBenchmarks();
 
@@ -32,9 +39,29 @@ const MIME = {
   ".svg": "image/svg+xml"
 };
 
-function json(res, status, payload) {
-  res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
-  res.end(JSON.stringify(payload));
+function json(req, res, status, payload) {
+  const body = Buffer.from(JSON.stringify(payload));
+  const headers = {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store"
+  };
+  const accepted = req.headers["accept-encoding"] || "";
+  if (body.length > 1024 && /\bbr\b/.test(accepted)) {
+    headers["content-encoding"] = "br";
+    headers.vary = "accept-encoding";
+    res.writeHead(status, headers);
+    res.end(brotliCompressSync(body, BROTLI_OPTIONS));
+    return;
+  }
+  if (body.length > 1024 && /\bgzip\b/.test(accepted)) {
+    headers["content-encoding"] = "gzip";
+    headers.vary = "accept-encoding";
+    res.writeHead(status, headers);
+    res.end(gzipSync(body, GZIP_OPTIONS));
+    return;
+  }
+  res.writeHead(status, headers);
+  res.end(body);
 }
 
 async function body(req) {
@@ -51,33 +78,63 @@ function isAuthorized(req) {
 
 function requireAuth(req, res) {
   if (isAuthorized(req)) return false;
-  json(res, 401, { error: "Unauthorized" });
+  json(req, res, 401, { error: "Unauthorized" });
   return true;
+}
+
+function clearDashboardCache() {
+  dashboardCache = null;
+  dashboardRatesCache = null;
+}
+
+function getDashboardRates() {
+  const now = Date.now();
+  if (!dashboardRatesCache || now - dashboardRatesCache.createdAt > DASHBOARD_CACHE_MS) {
+    dashboardRatesCache = { createdAt: now, rates: dashboardRates(new Date(now)) };
+  }
+  return dashboardRatesCache.rates;
+}
+
+function getDashboardPayload() {
+  const now = Date.now();
+  if (!dashboardCache || now - dashboardCache.createdAt > DASHBOARD_CACHE_MS) {
+    const meta = { ...metadata(), catalog: providerCatalog() };
+    const index = { metadata: modelIndexMetadata() };
+    dashboardCache = {
+      createdAt: now,
+      payload: {
+        meta,
+        index,
+        dashboard: buildDashboardSummary({ meta, rates: getDashboardRates(), generatedAt: new Date(now) })
+      }
+    };
+  }
+  return dashboardCache.payload;
 }
 
 async function api(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/dashboard") {
-    return json(res, 200, {
-      meta: { ...metadata(), catalog: providerCatalog() },
-      index: { metadata: modelIndexMetadata(), observations: modelIndex() },
-      rates: dashboardRates()
-    });
+    return json(req, res, 200, getDashboardPayload());
+  }
+  if (req.method === "GET" && url.pathname === "/api/dashboard-rates") {
+    return json(req, res, 200, getDashboardRates());
   }
   if (req.method === "GET" && url.pathname === "/api/rates") {
-    return json(res, 200, listRates(Object.fromEntries(url.searchParams)));
+    return json(req, res, 200, listRates(Object.fromEntries(url.searchParams)));
   }
   if (req.method === "GET" && url.pathname === "/api/meta") {
-    return json(res, 200, { ...metadata(), catalog: providerCatalog() });
+    return json(req, res, 200, { ...metadata(), catalog: providerCatalog() });
   }
   if (req.method === "GET" && url.pathname === "/api/model-index") {
-    return json(res, 200, { metadata: modelIndexMetadata(), observations: modelIndex() });
+    return json(req, res, 200, { metadata: modelIndexMetadata(), observations: modelIndex() });
   }
   if (req.method === "POST" && url.pathname === "/api/scrape") {
     if (requireAuth(req, res)) return;
     const input = await body(req);
     const ids = input.providers?.length ? input.providers : providerCatalog().map((p) => p.id);
     const results = await collectProviders(ids);
-    return json(res, 200, { results: summarizeCollection(results) });
+    clearDashboardCache();
+    return json(req, res, 200, { results: summarizeCollection(results) });
   }
   if (req.method === "POST" && url.pathname === "/api/archive") {
     if (requireAuth(req, res)) return;
@@ -87,10 +144,11 @@ async function api(req, res, url) {
       const rates = await importArchive(input.provider, input);
       saveRates(rates);
       finishRun(runId, "success", rates.length);
-      return json(res, 200, { records: rates.length });
+      clearDashboardCache();
+      return json(req, res, 200, { records: rates.length });
     } catch (error) {
       finishRun(runId, "failed", 0, error.message);
-      return json(res, 422, { error: error.message });
+      return json(req, res, 422, { error: error.message });
     }
   }
   if (req.method === "POST" && url.pathname === "/api/daily-report") {
@@ -98,20 +156,25 @@ async function api(req, res, url) {
     const input = await body(req);
     if (input.async) {
       runDailyReport({ ...input, async: undefined })
-        .then((result) => console.log(JSON.stringify({ dailyReport: result })))
+        .then((result) => {
+          clearDashboardCache();
+          console.log(JSON.stringify({ dailyReport: result }));
+        })
         .catch((error) => console.error(JSON.stringify({ dailyReportError: error.message })));
-      return json(res, 202, { status: "started" });
+      return json(req, res, 202, { status: "started" });
     }
-    return json(res, 200, await runDailyReport(input));
+    const result = await runDailyReport(input);
+    clearDashboardCache();
+    return json(req, res, 200, result);
   }
-  return json(res, 404, { error: "Not found" });
+  return json(req, res, 404, { error: "Not found" });
 }
 
 async function staticFile(req, res, url) {
   const requested = url.pathname === "/" ? "/index.html" : url.pathname;
   const safe = normalize(requested).replace(/^(\.\.[/\\])+/, "");
   const path = join(PUBLIC, safe);
-  if (!path.startsWith(PUBLIC)) return json(res, 403, { error: "Forbidden" });
+  if (!path.startsWith(PUBLIC)) return json(req, res, 403, { error: "Forbidden" });
   try {
     const data = await readFile(path);
     res.writeHead(200, {
@@ -120,7 +183,7 @@ async function staticFile(req, res, url) {
     });
     res.end(data);
   } catch {
-    json(res, 404, { error: "Not found" });
+    json(req, res, 404, { error: "Not found" });
   }
 }
 
@@ -130,7 +193,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname.startsWith("/api/")) await api(req, res, url);
     else await staticFile(req, res, url);
   } catch (error) {
-    json(res, 500, { error: error.message });
+    json(req, res, 500, { error: error.message });
   }
 });
 

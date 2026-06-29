@@ -1,8 +1,13 @@
 const state = {
   meta: null,
   rates: [],
+  ratesLoaded: false,
+  ratesPromise: null,
+  dashboard: null,
   indexMeta: null,
   observations: [],
+  indexLoaded: false,
+  indexPromise: null,
   months: 24,
   colors: ["#b7ff2a", "#7fb3ff", "#f7b041", "#53d769", "#b8c3d1", "#a78bfa", "#ff6b8a", "#7dd3fc", "#f2f4f8", "#34d399"]
 };
@@ -110,6 +115,7 @@ function priorityIndex(gpuModel) {
 }
 
 function latestPriceTimestamp() {
+  if (!state.ratesLoaded) return state.dashboard?.freshness?.latestPricePull || null;
   const validRows = state.rates.filter((row) => Number.isFinite(new Date(row.observedAt).getTime()));
   const liveRows = validRows.filter((row) => row.sourceKind === "live");
   const sourceRows = liveRows.length ? liveRows : validRows.filter((row) => row.sourceKind !== "benchmark-seed");
@@ -121,6 +127,10 @@ function commitmentLabel(value = "") {
   return value
     .replaceAll("-", " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function aggregationText(value) {
+  return (value || "median-of-provider-medians").replaceAll("-", " ");
 }
 
 async function request(url, options) {
@@ -144,15 +154,53 @@ function toast(message) {
 async function load() {
   const dashboard = await request("/api/dashboard");
   state.meta = dashboard.meta;
-  state.rates = dashboard.rates;
+  state.dashboard = dashboard.dashboard;
+  state.rates = [];
+  state.ratesLoaded = false;
   state.indexMeta = dashboard.index.metadata;
-  state.observations = dashboard.index.observations;
+  state.observations = dashboard.index.observations || [];
+  state.indexLoaded = Boolean(dashboard.index.observations?.length);
   populateControls();
   render();
 }
 
+async function ensureDashboardRates() {
+  if (state.ratesLoaded) return state.rates;
+  if (!state.ratesPromise) {
+    state.ratesPromise = request("/api/dashboard-rates").then((rates) => {
+      state.rates = rates;
+      state.ratesLoaded = true;
+      state.ratesPromise = null;
+      render();
+      return rates;
+    }).catch((error) => {
+      state.ratesPromise = null;
+      throw error;
+    });
+  }
+  return state.ratesPromise;
+}
+
+async function ensureModelIndex() {
+  if (state.indexLoaded) return state.observations;
+  if (!state.indexPromise) {
+    state.indexPromise = request("/api/model-index").then((index) => {
+      state.indexMeta = index.metadata;
+      state.observations = index.observations;
+      state.indexLoaded = true;
+      state.indexPromise = null;
+      render();
+      return state.observations;
+    }).catch((error) => {
+      state.indexPromise = null;
+      throw error;
+    });
+  }
+  return state.indexPromise;
+}
+
 function populateControls() {
-  const gpuCount = state.meta.gpus?.length || new Set(state.rates.map((row) => row.gpuModel)).size;
+  const gpuCount = state.meta.gpus?.length || state.dashboard?.hero?.gpus || new Set(state.rates.map((row) => row.gpuModel)).size;
   const cohorts = [
     ["all", `All ${gpuCount} GPU models`],
     ["modern", "Modern · H100, H200, A100, L40S, RTX 4090"],
@@ -430,10 +478,10 @@ async function showSourceDetails(indexRow) {
   $("#sourceDialogTitle").textContent = `${indexRow.gpuModel} · ${shortDate(indexRow.observedAt)}`;
   const aggregateMeta = indexRow.directObservationCount
     ? `${money(indexRow.pricePerGpuHour)} / GPU-hour<br>${indexRow.directObservationCount} direct point${indexRow.directObservationCount === 1 ? "" : "s"} · ${indexRow.providerCount} provider${indexRow.providerCount === 1 ? "" : "s"} · ${indexRow.regionCount} region${indexRow.regionCount === 1 ? "" : "s"}`
-    : `${money(indexRow.pricePerGpuHour)} / GPU-hour<br>${escapeHtml(indexRow.aggregation.replaceAll("-", " "))}`;
+    : `${money(indexRow.pricePerGpuHour)} / GPU-hour<br>${escapeHtml(aggregationText(indexRow.aggregation))}`;
 
   const aggregateCard = sourceCard({
-    name: indexRow.sourceName,
+    name: indexRow.sourceName || "Collected Source Index",
     type: "aggregate",
     href: indexRow.sourceUrl,
     meta: aggregateMeta
@@ -654,6 +702,13 @@ function renderHeroMetrics() {
   $("#heroSources").textContent = new Set(rows.map((row) => row.provider)).size.toLocaleString();
 }
 
+function renderHeroMetricsSummary(hero) {
+  $("#heroRows").textContent = Number(hero?.observations || 0).toLocaleString();
+  $("#heroGpus").textContent = Number(hero?.gpus || 0).toLocaleString();
+  $("#heroRegions").textContent = Number(hero?.regions || 0).toLocaleString();
+  $("#heroSources").textContent = Number(hero?.sources || 0).toLocaleString();
+}
+
 function renderMovementMatrix(rows) {
   $("#movementTable").innerHTML = rows.length ? `<div class="table-wrap tight-table">
     <table>
@@ -761,18 +816,79 @@ function renderVisualizations() {
   renderCommitmentDiscounts(commitmentDiscountRows(allCommitments));
 }
 
+function isDefaultDashboardView() {
+  return $("#datasetFilter").value === "direct" &&
+    $("#gpuFilter").value === "all" &&
+    $("#providerFilter").value === "all" &&
+    $("#regionFilter").value === "all" &&
+    $("#commitmentFilter").value === "all" &&
+    state.months === 24;
+}
+
+function renderDashboardSummary(summary) {
+  renderHeroMetricsSummary(summary.hero);
+  renderMovementMatrix(summary.movementRows);
+  renderRegionHeatmap(summary.heatmapRows);
+  renderTopMovers(summary.topMoverRows);
+  renderCheapestRegions(summary.cheapestRows);
+  renderProviderSpread(summary.providerSpreadRows);
+  renderCommitmentDiscounts(summary.commitmentRows);
+  renderChart(summary.chartRows);
+  renderTable(summary.tableRows);
+}
+
+function renderVisualizationLoadingPanels() {
+  renderHeroMetricsSummary(state.dashboard?.hero);
+  const loading = `<div class="empty compact-empty">Loading filtered data...</div>`;
+  $("#movementTable").innerHTML = loading;
+  $("#regionHeatmap").innerHTML = loading;
+  $("#topMovers").innerHTML = loading;
+  $("#cheapestRegions").innerHTML = loading;
+  $("#providerSpread").innerHTML = loading;
+  $("#commitmentDiscounts").innerHTML = loading;
+}
+
+function renderLoadingPanels() {
+  renderVisualizationLoadingPanels();
+  const loading = `<div class="empty compact-empty">Loading filtered data...</div>`;
+  $("#chart").innerHTML = loading;
+  $("#legend").innerHTML = "";
+  $("#ratesTable").innerHTML = `<tr><td colspan="6">Loading filtered data...</td></tr>`;
+}
+
 function render() {
-  const rows = filteredObservations();
-  const latest = latestByModel(rows);
   const cohortLabel = $("#gpuFilter").selectedOptions[0]?.textContent.split(" · ")[0] || "All models";
   const datasetLabel = $("#datasetFilter").selectedOptions[0]?.textContent || "Collected source index";
 
   $("#chartTitle").textContent = `${cohortLabel} · ${datasetLabel}`;
 
-  renderVisualizations();
-  renderChart(rows);
   renderSources();
   renderRuns();
+  if ($("#datasetFilter").value === "direct" && state.dashboard && isDefaultDashboardView()) {
+    renderDashboardSummary(state.dashboard);
+    return;
+  }
+  if ($("#datasetFilter").value === "aimultiple" && !state.indexLoaded) {
+    renderLoadingPanels();
+    ensureModelIndex().catch((error) => toast(error.message));
+    return;
+  }
+  if (!state.ratesLoaded) {
+    if ($("#datasetFilter").value === "aimultiple" && state.indexLoaded) {
+      const rows = filteredObservations();
+      renderVisualizationLoadingPanels();
+      renderChart(rows);
+      renderTable(rows);
+    } else {
+      renderLoadingPanels();
+    }
+    ensureDashboardRates().catch((error) => toast(error.message));
+    return;
+  }
+
+  const rows = filteredObservations();
+  renderVisualizations();
+  renderChart(rows);
   renderTable(rows);
 }
 
@@ -839,7 +955,7 @@ function attachTooltips() {
       tooltip.innerHTML = `<strong>${row.gpuModel}</strong>
         ${money(row.pricePerGpuHour)} / GPU-hour<br>
         ${shortDate(row.observedAt)}<br>
-        <span style="color:#aeb6af">${escapeHtml(row.aggregation.replaceAll("-", " "))}</span>`;
+        <span style="color:#aeb6af">${escapeHtml(aggregationText(row.aggregation))}</span>`;
       document.body.appendChild(tooltip);
       point.tooltip = tooltip;
     });
@@ -895,7 +1011,7 @@ function renderTable(rows) {
     <td>${groupLabels[row.group] || row.group}</td>
     <td>${shortDate(row.observedAt)}</td>
     <td class="rate">${money(row.pricePerGpuHour)}</td>
-    <td>${escapeHtml(row.aggregation.replaceAll("-", " "))}${row.directObservationCount ? ` · ${row.directObservationCount} rows` : ""}</td>
+    <td>${escapeHtml(aggregationText(row.aggregation))}${row.directObservationCount ? ` · ${row.directObservationCount} rows` : ""}</td>
     <td><button class="link-button" type="button" data-source-row='${JSON.stringify(row).replaceAll("'", "&#39;")}'>Inspect</button></td>
   </tr>`).join("") || `<tr><td colspan="6">No matching observations.</td></tr>`;
   document.querySelectorAll("[data-source-row]").forEach((button) => {
