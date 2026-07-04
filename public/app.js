@@ -648,18 +648,24 @@ function regionalHeatmapRows(currentRows) {
     .slice(0, 8);
 
   return gpuRows.map(([gpuModel, rows]) => {
-    const modelMedian = median(rows.map(priceValue));
     const cells = Object.fromEntries(REGION_GROUPS.map((group) => {
       const groupAverage = average(rows
         .filter((row) => regionGroup(row.region) === group)
         .map(priceValue));
       return [group, {
-        averagePrice: groupAverage,
-        relativeToMedian: Number.isFinite(modelMedian) && Number.isFinite(groupAverage)
-          ? groupAverage / modelMedian
-          : null
+        averagePrice: groupAverage
       }];
     }));
+    const prices = Object.values(cells).map((cell) => cell.averagePrice).filter(Number.isFinite);
+    const minPrice = prices.length ? Math.min(...prices) : null;
+    const maxPrice = prices.length ? Math.max(...prices) : null;
+    for (const cell of Object.values(cells)) {
+      cell.priceScore = Number.isFinite(cell.averagePrice) && Number.isFinite(minPrice) && Number.isFinite(maxPrice)
+        ? maxPrice > minPrice
+          ? (cell.averagePrice - minPrice) / (maxPrice - minPrice)
+          : 0.5
+        : null;
+    }
     return { gpuModel, cells };
   });
 }
@@ -736,13 +742,22 @@ function changeClass(value) {
   return "flat";
 }
 
-function heatClass(ratio) {
-  if (!Number.isFinite(ratio)) return "empty";
-  if (ratio <= 0.85) return "cheap-2";
-  if (ratio <= 0.95) return "cheap-1";
-  if (ratio <= 1.05) return "mid";
-  if (ratio <= 1.15) return "hot-1";
+function heatClass(score) {
+  if (!Number.isFinite(score)) return "empty";
+  if (score <= 0.2) return "cheap-2";
+  if (score <= 0.4) return "cheap-1";
+  if (score <= 0.6) return "mid";
+  if (score <= 0.8) return "hot-1";
   return "hot-2";
+}
+
+function heatLabel(score) {
+  if (!Number.isFinite(score)) return "No regional price";
+  if (score <= 0.2) return "Cheapest";
+  if (score <= 0.4) return "Lower priced";
+  if (score <= 0.6) return "Mid priced";
+  if (score <= 0.8) return "Higher priced";
+  return "Most expensive";
 }
 
 function renderHeroMetrics() {
@@ -794,7 +809,8 @@ function renderRegionHeatmap(rows) {
       <div class="heatmap-gpu">${escapeHtml(row.gpuModel)}</div>
       ${REGION_GROUPS.map((group) => {
         const cell = row.cells[group];
-        return `<div class="heat-cell ${heatClass(cell.relativeToMedian)}" title="${escapeHtml(group)}">${formatMaybe(cell.averagePrice, money)}</div>`;
+        const title = `${group} - ${heatLabel(cell.priceScore)}${Number.isFinite(cell.averagePrice) ? ` for ${row.gpuModel}: ${money(cell.averagePrice)}` : ""}`;
+        return `<div class="heat-cell ${heatClass(cell.priceScore)}" title="${escapeHtml(title)}">${formatMaybe(cell.averagePrice, money)}</div>`;
       }).join("")}
     `).join("")}
   </div>` : `<div class="empty compact-empty">No regional rates match these filters.</div>`;
