@@ -1,10 +1,11 @@
 import http from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, rename, writeFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 import { brotliCompressSync, constants as zlibConstants, gzipSync } from "node:zlib";
 import {
+  DATA_DIR,
   dashboardRates,
   dashboardSummaryData,
   finishRun,
@@ -25,10 +26,15 @@ const ROOT = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = join(ROOT, "public");
 const PORT = Number(process.env.PORT || 3000);
 const DASHBOARD_CACHE_MS = 5 * 60 * 1000;
+const DASHBOARD_CACHE_FILE = join(DATA_DIR, "dashboard-payload-cache.json");
+const DASHBOARD_CACHE_VERSION = 1;
 const BROTLI_OPTIONS = { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 4 } };
 const GZIP_OPTIONS = { level: 6 };
 let dashboardCache = null;
 let dashboardRatesCache = null;
+let dashboardRefreshPromise = null;
+let dashboardCacheGeneration = 0;
+let dashboardRefreshGeneration = -1;
 markInterruptedRuns();
 seedBenchmarks();
 
@@ -85,8 +91,79 @@ function requireAuth(req, res) {
 }
 
 function clearDashboardCache() {
+  dashboardCacheGeneration += 1;
   dashboardCache = null;
   dashboardRatesCache = null;
+}
+
+function buildDashboardPayload(now = Date.now()) {
+  const generatedAt = new Date(now);
+  const meta = { ...metadata(), catalog: providerCatalog() };
+  const index = { metadata: modelIndexMetadata() };
+  const { chartRates, panelRates } = dashboardSummaryData(generatedAt);
+  return {
+    meta,
+    index,
+    dashboard: buildDashboardSummary({
+      meta,
+      rates: panelRates,
+      chartRates,
+      panelRates,
+      generatedAt
+    })
+  };
+}
+
+function cachedPayloadIsFresh(cache, now = Date.now()) {
+  return cache?.payload && now - cache.createdAt <= DASHBOARD_CACHE_MS;
+}
+
+async function readPersistedDashboardCache() {
+  try {
+    const raw = await readFile(DASHBOARD_CACHE_FILE, "utf8");
+    const cache = JSON.parse(raw);
+    if (cache.version !== DASHBOARD_CACHE_VERSION || !cache.createdAt || !cache.payload?.dashboard) return null;
+    return cache;
+  } catch {
+    return null;
+  }
+}
+
+async function writePersistedDashboardCache(cache) {
+  const tempPath = `${DASHBOARD_CACHE_FILE}.${process.pid}.tmp`;
+  await writeFile(tempPath, JSON.stringify(cache));
+  await rename(tempPath, DASHBOARD_CACHE_FILE);
+}
+
+async function refreshDashboardCache() {
+  if (!dashboardRefreshPromise || dashboardRefreshGeneration !== dashboardCacheGeneration) {
+    const generation = dashboardCacheGeneration;
+    dashboardRefreshGeneration = generation;
+    dashboardRefreshPromise = (async () => {
+      const cache = {
+        version: DASHBOARD_CACHE_VERSION,
+        createdAt: Date.now(),
+        payload: buildDashboardPayload()
+      };
+      if (generation !== dashboardCacheGeneration) return refreshDashboardCache();
+      dashboardCache = cache;
+      try {
+        await writePersistedDashboardCache(cache);
+      } catch (error) {
+        console.error(JSON.stringify({ dashboardCachePersistError: error.message }));
+      }
+      return cache.payload;
+    })().finally(() => {
+      if (generation === dashboardRefreshGeneration) dashboardRefreshPromise = null;
+    });
+  }
+  return dashboardRefreshPromise;
+}
+
+function scheduleDashboardRefresh(label) {
+  refreshDashboardCache()
+    .then(() => console.log(JSON.stringify({ dashboardCache: "refreshed", label })))
+    .catch((error) => console.error(JSON.stringify({ dashboardCacheError: error.message, label })));
 }
 
 function getDashboardRates() {
@@ -97,34 +174,23 @@ function getDashboardRates() {
   return dashboardRatesCache.rates;
 }
 
-function getDashboardPayload() {
+async function getDashboardPayload() {
   const now = Date.now();
-  if (!dashboardCache || now - dashboardCache.createdAt > DASHBOARD_CACHE_MS) {
-    const generatedAt = new Date(now);
-    const meta = { ...metadata(), catalog: providerCatalog() };
-    const index = { metadata: modelIndexMetadata() };
-    const { chartRates, panelRates } = dashboardSummaryData(generatedAt);
-    dashboardCache = {
-      createdAt: now,
-      payload: {
-        meta,
-        index,
-        dashboard: buildDashboardSummary({
-          meta,
-          rates: panelRates,
-          chartRates,
-          panelRates,
-          generatedAt
-        })
-      }
-    };
+  if (cachedPayloadIsFresh(dashboardCache, now)) return dashboardCache.payload;
+
+  const persistedCache = await readPersistedDashboardCache();
+  if (persistedCache?.payload) {
+    dashboardCache = persistedCache;
+    if (!cachedPayloadIsFresh(persistedCache, now)) scheduleDashboardRefresh("stale-read");
+    return persistedCache.payload;
   }
-  return dashboardCache.payload;
+
+  return refreshDashboardCache();
 }
 
 async function api(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/dashboard") {
-    return json(req, res, 200, getDashboardPayload());
+    return json(req, res, 200, await getDashboardPayload());
   }
   if (req.method === "GET" && url.pathname === "/api/dashboard-rates") {
     return json(req, res, 200, getDashboardRates());
@@ -144,6 +210,7 @@ async function api(req, res, url) {
     const ids = input.providers?.length ? input.providers : providerCatalog().map((p) => p.id);
     const results = await collectProviders(ids);
     clearDashboardCache();
+    await refreshDashboardCache();
     return json(req, res, 200, { results: summarizeCollection(results) });
   }
   if (req.method === "POST" && url.pathname === "/api/archive") {
@@ -155,6 +222,7 @@ async function api(req, res, url) {
       saveRates(rates);
       finishRun(runId, "success", rates.length);
       clearDashboardCache();
+      await refreshDashboardCache();
       return json(req, res, 200, { records: rates.length });
     } catch (error) {
       finishRun(runId, "failed", 0, error.message);
@@ -168,6 +236,7 @@ async function api(req, res, url) {
       runDailyReport({ ...input, async: undefined })
         .then((result) => {
           clearDashboardCache();
+          scheduleDashboardRefresh("daily-report");
           console.log(JSON.stringify({ dailyReport: result }));
         })
         .catch((error) => console.error(JSON.stringify({ dailyReportError: error.message })));
@@ -175,6 +244,7 @@ async function api(req, res, url) {
     }
     const result = await runDailyReport(input);
     clearDashboardCache();
+    await refreshDashboardCache();
     return json(req, res, 200, result);
   }
   return json(req, res, 404, { error: "Not found" });
@@ -211,4 +281,5 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`GPU Rental Rate Index running at http://localhost:${PORT}`);
+  scheduleDashboardRefresh("startup");
 });
