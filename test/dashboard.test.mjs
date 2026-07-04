@@ -52,7 +52,9 @@ test("dashboard summary keeps first-load chart payload slim", () => {
 
   const h100Heatmap = summary.heatmapRows.find((row) => row.gpuModel === "H100");
   assert.equal(h100Heatmap.cells["North America"].averagePrice, 4);
+  assert.equal(h100Heatmap.cells["North America"].relativeToMedian, 0.8);
   assert.equal(h100Heatmap.cells["North America"].priceScore, 0);
   assert.equal(h100Heatmap.cells.Europe.averagePrice, 6);
+  assert.equal(h100Heatmap.cells.Europe.relativeToMedian, 1.2);
   assert.equal(h100Heatmap.cells.Europe.priceScore, 1);
 });

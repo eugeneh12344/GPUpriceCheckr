@@ -223,10 +223,14 @@ function regionalHeatmapRows(currentRows) {
     .toSorted((a, b) => priorityIndex(a[0]) - priorityIndex(b[0]) || a[0].localeCompare(b[0]))
     .slice(0, 8)
     .map(([gpuModel, rows]) => {
+      const modelMedian = median(rows.map(priceValue));
       const cells = Object.fromEntries(REGION_GROUPS.map((group) => {
         const groupAverage = average(rows.filter((row) => regionGroup(row.region) === group).map(priceValue));
         return [group, {
-          averagePrice: groupAverage
+          averagePrice: groupAverage,
+          relativeToMedian: Number.isFinite(modelMedian) && Number.isFinite(groupAverage)
+            ? groupAverage / modelMedian
+            : null
         }];
       }));
       const prices = Object.values(cells).map((cell) => cell.averagePrice).filter(Number.isFinite);

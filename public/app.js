@@ -648,12 +648,16 @@ function regionalHeatmapRows(currentRows) {
     .slice(0, 8);
 
   return gpuRows.map(([gpuModel, rows]) => {
+    const modelMedian = median(rows.map(priceValue));
     const cells = Object.fromEntries(REGION_GROUPS.map((group) => {
       const groupAverage = average(rows
         .filter((row) => regionGroup(row.region) === group)
         .map(priceValue));
       return [group, {
-        averagePrice: groupAverage
+        averagePrice: groupAverage,
+        relativeToMedian: Number.isFinite(modelMedian) && Number.isFinite(groupAverage)
+          ? groupAverage / modelMedian
+          : null
       }];
     }));
     const prices = Object.values(cells).map((cell) => cell.averagePrice).filter(Number.isFinite);
@@ -735,6 +739,16 @@ function commitmentDiscountRows(allRows) {
     .slice(0, 7);
 }
 
+function heatScore(cell = {}) {
+  if (Number.isFinite(cell.priceScore)) return cell.priceScore;
+  if (!Number.isFinite(cell.relativeToMedian)) return null;
+  if (cell.relativeToMedian <= 0.85) return 0.1;
+  if (cell.relativeToMedian <= 0.95) return 0.3;
+  if (cell.relativeToMedian <= 1.05) return 0.5;
+  if (cell.relativeToMedian <= 1.15) return 0.7;
+  return 0.9;
+}
+
 function changeClass(value) {
   if (!Number.isFinite(value)) return "neutral";
   if (value < -1) return "down";
@@ -809,8 +823,9 @@ function renderRegionHeatmap(rows) {
       <div class="heatmap-gpu">${escapeHtml(row.gpuModel)}</div>
       ${REGION_GROUPS.map((group) => {
         const cell = row.cells[group];
-        const title = `${group} - ${heatLabel(cell.priceScore)}${Number.isFinite(cell.averagePrice) ? ` for ${row.gpuModel}: ${money(cell.averagePrice)}` : ""}`;
-        return `<div class="heat-cell ${heatClass(cell.priceScore)}" title="${escapeHtml(title)}">${formatMaybe(cell.averagePrice, money)}</div>`;
+        const score = heatScore(cell);
+        const title = `${group} - ${heatLabel(score)}${Number.isFinite(cell.averagePrice) ? ` for ${row.gpuModel}: ${money(cell.averagePrice)}` : ""}`;
+        return `<div class="heat-cell ${heatClass(score)}" title="${escapeHtml(title)}">${formatMaybe(cell.averagePrice, money)}</div>`;
       }).join("")}
     `).join("")}
   </div>` : `<div class="empty compact-empty">No regional rates match these filters.</div>`;
