@@ -31,10 +31,14 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_rates_observed_at ON rates(observed_at);
   CREATE INDEX IF NOT EXISTS idx_rates_gpu_model ON rates(gpu_model);
   CREATE INDEX IF NOT EXISTS idx_rates_provider ON rates(provider);
+  CREATE INDEX IF NOT EXISTS idx_rates_region ON rates(region);
+  CREATE INDEX IF NOT EXISTS idx_rates_commitment ON rates(commitment);
   CREATE INDEX IF NOT EXISTS idx_rates_exact_lookup
     ON rates(provider, gpu_model, gpu_variant, region, commitment, observed_at);
   CREATE INDEX IF NOT EXISTS idx_rates_filter_lookup
     ON rates(gpu_model, observed_at, provider, region, commitment);
+  CREATE INDEX IF NOT EXISTS idx_rates_commitment_observed_lookup
+    ON rates(commitment, observed_at, provider, gpu_model);
 
   CREATE TABLE IF NOT EXISTS scrape_runs (
     id INTEGER PRIMARY KEY,
@@ -167,6 +171,59 @@ function dashboardMonthlyRows() {
   `).all();
 }
 
+function dashboardChartAggregateRows(generatedAt) {
+  const cutoff = new Date(Date.UTC(
+    generatedAt.getUTCFullYear(),
+    generatedAt.getUTCMonth() - 25,
+    1
+  )).toISOString();
+
+  return db.prepare(`
+    SELECT
+      substr(observed_at, 1, 7) || '-01T00:00:00.000Z' AS observedAt,
+      provider,
+      provider_type AS providerType,
+      gpu_model AS gpuModel,
+      '' AS gpuVariant,
+      'dashboard aggregate' AS region,
+      'on-demand' AS commitment,
+      AVG(price_per_gpu_hour) AS pricePerGpuHour,
+      'USD' AS currency,
+      MIN(source_url) AS sourceUrl,
+      'dashboard-aggregate' AS sourceKind,
+      COUNT(*) AS directObservationCount,
+      COUNT(DISTINCT region) AS regionCount
+    FROM rates
+    WHERE commitment = 'on-demand' AND observed_at >= ?
+    GROUP BY substr(observed_at, 1, 7), provider, provider_type, gpu_model
+    ORDER BY observedAt, provider, gpuModel
+  `).all(cutoff);
+}
+
+function dashboardSummaryPanelRows(generatedAt) {
+  const rowsById = new Map();
+  const addRows = (rows) => {
+    for (const row of rows) rowsById.set(row.id, row);
+  };
+
+  addRows(dashboardExactRows("", [], 1));
+  addRows(dashboardExactRows("WHERE commitment = 'on-demand'", [], 2));
+
+  for (const days of [1, 7, 30, 90, 365]) {
+    const cutoff = new Date(generatedAt.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
+    addRows(dashboardExactRows("WHERE commitment = 'on-demand' AND observed_at <= ?", [cutoff], 1));
+  }
+
+  return [...rowsById.values()]
+    .map(({ id, ...row }) => row)
+    .toSorted((a, b) =>
+      new Date(a.observedAt) - new Date(b.observedAt) ||
+      a.provider.localeCompare(b.provider) ||
+      a.gpuModel.localeCompare(b.gpuModel) ||
+      a.pricePerGpuHour - b.pricePerGpuHour
+    );
+}
+
 export function dashboardRates(generatedAt = new Date()) {
   const rowsById = new Map();
   const addRows = (rows) => {
@@ -189,6 +246,13 @@ export function dashboardRates(generatedAt = new Date()) {
       a.gpuModel.localeCompare(b.gpuModel) ||
       a.pricePerGpuHour - b.pricePerGpuHour
     );
+}
+
+export function dashboardSummaryData(generatedAt = new Date()) {
+  return {
+    chartRates: dashboardChartAggregateRows(generatedAt),
+    panelRates: dashboardSummaryPanelRows(generatedAt)
+  };
 }
 
 export function metadata() {

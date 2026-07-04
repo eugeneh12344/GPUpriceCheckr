@@ -8,6 +8,7 @@ const state = {
   observations: [],
   indexLoaded: false,
   indexPromise: null,
+  dashboardApiMs: null,
   months: 24,
   colors: ["#b7ff2a", "#7fb3ff", "#f7b041", "#53d769", "#b8c3d1", "#a78bfa", "#ff6b8a", "#7dd3fc", "#f2f4f8", "#34d399"]
 };
@@ -87,6 +88,25 @@ function formatMaybe(value, formatter) {
   return Number.isFinite(value) ? formatter(value) : "n/a";
 }
 
+function formatDuration(ms) {
+  if (!Number.isFinite(ms)) return "n/a";
+  if (ms >= 1000) return `${(ms / 1000).toFixed(ms >= 10_000 ? 1 : 2)}s`;
+  return `${Math.round(ms)}ms`;
+}
+
+function setLoadTime(text) {
+  const el = $("#loadTime");
+  if (el) el.textContent = text;
+}
+
+function reportLoadTime() {
+  requestAnimationFrame(() => {
+    const totalMs = performance.now();
+    const apiMs = state.dashboardApiMs;
+    setLoadTime(`${formatDuration(totalMs)} load / ${formatDuration(apiMs)} API`);
+  });
+}
+
 function observedTime(row) {
   return new Date(row.observedAt).getTime();
 }
@@ -133,14 +153,25 @@ function aggregationText(value) {
   return (value || "median-of-provider-medians").replaceAll("-", " ");
 }
 
-async function request(url, options) {
-  const response = await fetch(url, {
-    headers: { "content-type": "application/json" },
-    ...options
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || "Request failed");
-  return data;
+async function request(url, options = {}) {
+  const { timeoutMs = 30_000, headers = {}, ...fetchOptions } = options;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      ...fetchOptions,
+      signal: controller.signal,
+      headers: { "content-type": "application/json", ...headers }
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Request failed");
+    return data;
+  } catch (error) {
+    if (error.name === "AbortError") throw new Error(`${url} timed out after ${formatDuration(timeoutMs)}`);
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function toast(message) {
@@ -152,7 +183,9 @@ function toast(message) {
 }
 
 async function load() {
+  const apiStartedAt = performance.now();
   const dashboard = await request("/api/dashboard");
+  state.dashboardApiMs = performance.now() - apiStartedAt;
   state.meta = dashboard.meta;
   state.dashboard = dashboard.dashboard;
   state.rates = [];
@@ -162,6 +195,20 @@ async function load() {
   state.indexLoaded = Boolean(dashboard.index.observations?.length);
   populateControls();
   render();
+  reportLoadTime();
+}
+
+function showLoadError(error) {
+  setLoadTime(`Load failed after ${formatDuration(performance.now())}`);
+  $("#freshness").textContent = "Dashboard data unavailable";
+  $("#chart").innerHTML = `<div class="empty">Dashboard data did not load. ${escapeHtml(error.message)}</div>`;
+  $("#movementTable").innerHTML = `<div class="empty compact-empty">No data loaded.</div>`;
+  $("#regionHeatmap").innerHTML = `<div class="empty compact-empty">No data loaded.</div>`;
+  $("#topMovers").innerHTML = `<div class="empty compact-empty">No data loaded.</div>`;
+  $("#cheapestRegions").innerHTML = `<div class="empty compact-empty">No data loaded.</div>`;
+  $("#providerSpread").innerHTML = `<div class="empty compact-empty">No data loaded.</div>`;
+  $("#commitmentDiscounts").innerHTML = `<div class="empty compact-empty">No data loaded.</div>`;
+  $("#ratesTable").innerHTML = `<tr><td colspan="6">No data loaded.</td></tr>`;
 }
 
 async function ensureDashboardRates() {
@@ -309,17 +356,6 @@ function latestRateMap(rates, cutoff = Infinity) {
   return latest;
 }
 
-function previousRateFor(row, rates) {
-  const rowTime = observedTime(row);
-  let previous = null;
-  for (const candidate of rates) {
-    const candidateTime = observedTime(candidate);
-    if (rateKey(candidate) !== rateKey(row) || candidateTime >= rowTime) continue;
-    if (!previous || candidateTime > observedTime(previous)) previous = candidate;
-  }
-  return previous;
-}
-
 function matchedComparison(currentRows, allRates, cutoff) {
   const previousByKey = latestRateMap(allRates, cutoff);
   const pairs = currentRows
@@ -329,6 +365,20 @@ function matchedComparison(currentRows, allRates, cutoff) {
   const currentAverage = average(pairs.map((pair) => priceValue(pair.current)));
   const previousAverage = average(pairs.map((pair) => priceValue(pair.previous)));
   return { change: pctChange(currentAverage, previousAverage), matched: pairs.length };
+}
+
+function previousRateMap(currentRows, allRates) {
+  const currentTimes = new Map(currentRows.map((row) => [rateKey(row), observedTime(row)]));
+  const previous = new Map();
+  for (const row of allRates) {
+    const key = rateKey(row);
+    if (!currentTimes.has(key)) continue;
+    const time = observedTime(row);
+    if (!Number.isFinite(time) || time >= currentTimes.get(key)) continue;
+    const existing = previous.get(key);
+    if (!existing || time > existing.time) previous.set(key, { row, time });
+  }
+  return new Map([...previous.entries()].map(([key, value]) => [key, value.row]));
 }
 
 function regionGroup(region = "") {
@@ -581,8 +631,9 @@ function movementRows(currentRows, allRates) {
 }
 
 function topMoverRows(currentRows, allRates) {
+  const previousByKey = previousRateMap(currentRows, allRates);
   return currentRows.map((row) => {
-    const previous = previousRateFor(row, allRates);
+    const previous = previousByKey.get(rateKey(row));
     const delta = previous ? priceValue(row) - priceValue(previous) : null;
     const deltaPercent = previous ? pctChange(priceValue(row), priceValue(previous)) : null;
     return { ...row, previous, delta, deltaPercent };
@@ -1036,4 +1087,7 @@ $("#sourceDialog").addEventListener("click", (event) => {
   if (event.target === event.currentTarget) event.currentTarget.close();
 });
 
-load().catch((error) => toast(error.message));
+load().catch((error) => {
+  showLoadError(error);
+  toast(error.message);
+});

@@ -6,6 +6,7 @@ import { dirname } from "node:path";
 import { brotliCompressSync, constants as zlibConstants, gzipSync } from "node:zlib";
 import {
   dashboardRates,
+  dashboardSummaryData,
   finishRun,
   listRates,
   markInterruptedRuns,
@@ -36,6 +37,7 @@ const MIME = {
   ".css": "text/css; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".png": "image/png",
   ".svg": "image/svg+xml"
 };
 
@@ -98,14 +100,22 @@ function getDashboardRates() {
 function getDashboardPayload() {
   const now = Date.now();
   if (!dashboardCache || now - dashboardCache.createdAt > DASHBOARD_CACHE_MS) {
+    const generatedAt = new Date(now);
     const meta = { ...metadata(), catalog: providerCatalog() };
     const index = { metadata: modelIndexMetadata() };
+    const { chartRates, panelRates } = dashboardSummaryData(generatedAt);
     dashboardCache = {
       createdAt: now,
       payload: {
         meta,
         index,
-        dashboard: buildDashboardSummary({ meta, rates: getDashboardRates(), generatedAt: new Date(now) })
+        dashboard: buildDashboardSummary({
+          meta,
+          rates: panelRates,
+          chartRates,
+          panelRates,
+          generatedAt
+        })
       }
     };
   }
@@ -177,9 +187,11 @@ async function staticFile(req, res, url) {
   if (!path.startsWith(PUBLIC)) return json(req, res, 403, { error: "Forbidden" });
   try {
     const data = await readFile(path);
+    const type = extname(path);
+    const isHtml = type === ".html";
     res.writeHead(200, {
-      "content-type": MIME[extname(path)] || "application/octet-stream",
-      "cache-control": "no-cache"
+      "content-type": MIME[type] || "application/octet-stream",
+      "cache-control": isHtml ? "no-cache" : "public, max-age=3600, stale-while-revalidate=86400"
     });
     res.end(data);
   } catch {

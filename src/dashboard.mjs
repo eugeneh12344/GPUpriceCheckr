@@ -75,17 +75,6 @@ function latestRateMap(rates, cutoff = Infinity) {
   return latest;
 }
 
-function previousRateFor(row, rates) {
-  const rowTime = observedTime(row);
-  let previous = null;
-  for (const candidate of rates) {
-    const candidateTime = observedTime(candidate);
-    if (rateKey(candidate) !== rateKey(row) || candidateTime >= rowTime) continue;
-    if (!previous || candidateTime > observedTime(previous)) previous = candidate;
-  }
-  return previous;
-}
-
 function matchedComparison(currentRows, allRates, cutoff) {
   const previousByKey = latestRateMap(allRates, cutoff);
   const pairs = currentRows
@@ -146,6 +135,7 @@ function directIndexObservations(rates) {
       sourceUrls: new Set(),
       regions: new Set(),
       commitments: new Set(),
+      rawRegionCount: 0,
       rows: 0
     };
     const providerRows = group.providerPrices.get(row.provider) || [];
@@ -154,7 +144,8 @@ function directIndexObservations(rates) {
     group.sourceUrls.add(row.sourceUrl);
     group.regions.add(row.region);
     group.commitments.add(row.commitment);
-    group.rows += 1;
+    group.rawRegionCount = Math.max(group.rawRegionCount, Number(row.regionCount || 0));
+    group.rows += Number(row.directObservationCount || 1);
     groups.set(key, group);
   }
 
@@ -174,7 +165,7 @@ function directIndexObservations(rates) {
       sourceUrl: [...group.sourceUrls][0] || "",
       directObservationCount: group.rows,
       providerCount: group.providerPrices.size,
-      regionCount: group.regions.size,
+      regionCount: group.rawRegionCount || group.regions.size,
       commitment
     }];
   }).toSorted((a, b) =>
@@ -202,9 +193,24 @@ function movementRows(currentRows, allRates, generatedAt) {
   );
 }
 
+function previousRateMap(currentRows, allRates) {
+  const currentTimes = new Map(currentRows.map((row) => [rateKey(row), observedTime(row)]));
+  const previous = new Map();
+  for (const row of allRates) {
+    const key = rateKey(row);
+    if (!currentTimes.has(key)) continue;
+    const time = observedTime(row);
+    if (!Number.isFinite(time) || time >= currentTimes.get(key)) continue;
+    const existing = previous.get(key);
+    if (!existing || time > existing.time) previous.set(key, { row, time });
+  }
+  return new Map([...previous.entries()].map(([key, value]) => [key, value.row]));
+}
+
 function topMoverRows(currentRows, allRates) {
+  const previousByKey = previousRateMap(currentRows, allRates);
   return currentRows.map((row) => {
-    const previous = previousRateFor(row, allRates);
+    const previous = previousByKey.get(rateKey(row));
     const deltaPercent = previous ? pctChange(priceValue(row), priceValue(previous)) : null;
     return { ...row, previous, deltaPercent };
   }).filter((row) => Number.isFinite(row.deltaPercent))
@@ -294,11 +300,11 @@ function latestPriceTimestamp(rates) {
   return rows.toSorted((a, b) => observedTime(b) - observedTime(a))[0]?.observedAt || null;
 }
 
-export function buildDashboardSummary({ meta, rates, generatedAt = new Date() }) {
-  const onDemandRows = rates.filter((row) => row.commitment === "on-demand");
+export function buildDashboardSummary({ meta, rates, chartRates = rates, panelRates = rates, generatedAt = new Date() }) {
+  const onDemandRows = panelRates.filter((row) => row.commitment === "on-demand");
   const currentRows = [...latestRateMap(onDemandRows).values()];
   const chartCutoff = new Date(Date.UTC(generatedAt.getUTCFullYear(), generatedAt.getUTCMonth() - 24, 1));
-  const fullChartRows = directIndexObservations(rates).filter((row) => new Date(row.observedAt) >= chartCutoff);
+  const fullChartRows = directIndexObservations(chartRates).filter((row) => new Date(row.observedAt) >= chartCutoff);
   const chartRows = fullChartRows.map((row) => ({
     observedAt: row.observedAt,
     gpuModel: row.gpuModel,
@@ -307,7 +313,7 @@ export function buildDashboardSummary({ meta, rates, generatedAt = new Date() })
   }));
 
   return {
-    freshness: { latestPricePull: latestPriceTimestamp(rates) },
+    freshness: { latestPricePull: latestPriceTimestamp(panelRates.length ? panelRates : rates) },
     hero: {
       observations: Number(meta.range?.count || rates.length),
       gpus: meta.gpus?.length || new Set(rates.map((row) => row.gpuModel)).size,
@@ -321,6 +327,6 @@ export function buildDashboardSummary({ meta, rates, generatedAt = new Date() })
     topMoverRows: topMoverRows(currentRows, onDemandRows),
     cheapestRows: cheapestRegionRows(currentRows),
     providerSpreadRows: providerSpreadRows(currentRows),
-    commitmentRows: commitmentDiscountRows(rates)
+    commitmentRows: commitmentDiscountRows(panelRates)
   };
 }
