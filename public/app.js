@@ -22,6 +22,7 @@ const escapeHtml = (value = "") => String(value).replace(/[&<>"']/g, (char) => (
   "'": "&#39;"
 })[char]);
 const money = (value) => `$${Number(value).toFixed(2)}`;
+const priceText = (value) => formatMaybe(priceValue({ pricePerGpuHour: value }), money);
 const shortDate = (date) => new Intl.DateTimeFormat("en-US", {
   month: "short",
   year: "2-digit",
@@ -116,7 +117,8 @@ function rateKey(row) {
 }
 
 function priceValue(row) {
-  return Number(row.pricePerGpuHour);
+  const price = Number(row.pricePerGpuHour);
+  return Number.isFinite(price) && price > 0 ? price : null;
 }
 
 function groupBy(values, keyFn) {
@@ -136,7 +138,7 @@ function priorityIndex(gpuModel) {
 
 function latestPriceTimestamp() {
   if (!state.ratesLoaded) return state.dashboard?.freshness?.latestPricePull || null;
-  const validRows = state.rates.filter((row) => Number.isFinite(new Date(row.observedAt).getTime()));
+  const validRows = state.rates.filter((row) => Number.isFinite(new Date(row.observedAt).getTime()) && Number.isFinite(priceValue(row)));
   const liveRows = validRows.filter((row) => row.sourceKind === "live");
   const sourceRows = liveRows.length ? liveRows : validRows.filter((row) => row.sourceKind !== "benchmark-seed");
   const rows = sourceRows.length ? sourceRows : validRows;
@@ -347,6 +349,7 @@ function comparableRates(rates) {
 function latestRateMap(rates, cutoff = Infinity) {
   const latest = new Map();
   for (const row of rates) {
+    if (!Number.isFinite(priceValue(row))) continue;
     const time = observedTime(row);
     if (!Number.isFinite(time) || time > cutoff) continue;
     const key = rateKey(row);
@@ -411,7 +414,8 @@ function regionGroup(region = "") {
 function directIndexObservations() {
   const groups = new Map();
   for (const row of filteredDirectRates()) {
-    if (!Number.isFinite(Number(row.pricePerGpuHour))) continue;
+    const price = priceValue(row);
+    if (!Number.isFinite(price)) continue;
     const month = monthKey(row.observedAt);
     const key = `${month}|${row.gpuModel}`;
     const group = groups.get(key) || {
@@ -424,7 +428,7 @@ function directIndexObservations() {
       rows: 0
     };
     const providerRows = group.providerPrices.get(row.provider) || [];
-    providerRows.push(Number(row.pricePerGpuHour));
+    providerRows.push(price);
     group.providerPrices.set(row.provider, providerRows);
     group.sourceUrls.add(row.sourceUrl);
     group.regions.add(row.region);
@@ -492,9 +496,10 @@ async function directObservationsFor(indexRow) {
   if (commitment !== "all") params.set("commitment", commitment);
   const rows = await request(`/api/rates?${params}`);
   return rows.filter((row) =>
+    Number.isFinite(priceValue(row)) &&
     row.gpuModel === indexRow.gpuModel &&
     monthKey(row.observedAt) === selectedMonth
-  ).toSorted((a, b) => a.provider.localeCompare(b.provider) || a.pricePerGpuHour - b.pricePerGpuHour);
+  ).toSorted((a, b) => a.provider.localeCompare(b.provider) || priceValue(a) - priceValue(b));
 }
 
 function providerSummaryFor(rows) {
@@ -527,8 +532,8 @@ async function showSourceDetails(indexRow) {
   const dialog = $("#sourceDialog");
   $("#sourceDialogTitle").textContent = `${indexRow.gpuModel} · ${shortDate(indexRow.observedAt)}`;
   const aggregateMeta = indexRow.directObservationCount
-    ? `${money(indexRow.pricePerGpuHour)} / GPU-hour<br>${indexRow.directObservationCount} direct point${indexRow.directObservationCount === 1 ? "" : "s"} · ${indexRow.providerCount} provider${indexRow.providerCount === 1 ? "" : "s"} · ${indexRow.regionCount} region${indexRow.regionCount === 1 ? "" : "s"}`
-    : `${money(indexRow.pricePerGpuHour)} / GPU-hour<br>${escapeHtml(aggregationText(indexRow.aggregation))}`;
+    ? `${priceText(indexRow.pricePerGpuHour)} / GPU-hour<br>${indexRow.directObservationCount} direct point${indexRow.directObservationCount === 1 ? "" : "s"} · ${indexRow.providerCount} provider${indexRow.providerCount === 1 ? "" : "s"} · ${indexRow.regionCount} region${indexRow.regionCount === 1 ? "" : "s"}`
+    : `${priceText(indexRow.pricePerGpuHour)} / GPU-hour<br>${escapeHtml(aggregationText(indexRow.aggregation))}`;
 
   const aggregateCard = sourceCard({
     name: indexRow.sourceName || "Collected Source Index",
@@ -563,7 +568,7 @@ async function showSourceDetails(indexRow) {
               <td>${fullDate(row.observedAt)}</td>
               <td>${escapeHtml(row.region)}</td>
               <td>${escapeHtml(commitmentLabel(row.commitment))}</td>
-              <td class="rate">${money(row.pricePerGpuHour)}</td>
+              <td class="rate">${priceText(row.pricePerGpuHour)}</td>
               <td>${escapeHtml(row.sourceKind)}</td>
               <td><a href="${escapeHtml(row.sourceUrl)}" target="_blank" rel="noopener">Open</a></td>
             </tr>`).join("")}</tbody>
@@ -575,7 +580,7 @@ async function showSourceDetails(indexRow) {
         <h3>Index data point</h3>
         <div class="selected-point">
           <span>${escapeHtml(indexRow.gpuModel)}</span>
-          <strong>${money(indexRow.pricePerGpuHour)}</strong>
+          <strong>${priceText(indexRow.pricePerGpuHour)}</strong>
           <span>${fullDate(indexRow.observedAt)}</span>
         </div>
         <div class="sources compact">${aggregateCard}</div>
@@ -838,7 +843,7 @@ function renderTopMovers(rows) {
       <span>${escapeHtml(row.provider)} · ${escapeHtml(row.region)}</span>
     </div>
     <div class="mover-rate">
-      <span>${money(row.previous.pricePerGpuHour)} -> ${money(row.pricePerGpuHour)}</span>
+      <span>${priceText(row.previous.pricePerGpuHour)} -> ${priceText(row.pricePerGpuHour)}</span>
       <strong>${percent(row.deltaPercent)}</strong>
     </div>
   </div>`).join("") : `<div class="empty compact-empty">No matched changes yet for the current filter set.</div>`;
@@ -850,7 +855,7 @@ function renderCheapestRegions(rows) {
     <div class="cheap-pills">
       ${row.picks.map((pick) => `<span>
         <b>${escapeHtml(pick.region)}</b>
-        ${money(pick.pricePerGpuHour)}
+        ${priceText(pick.pricePerGpuHour)}
         <small>${escapeHtml(pick.provider)}</small>
       </span>`).join("")}
     </div>
@@ -977,7 +982,8 @@ function render() {
 function renderChart(rows) {
   const chart = $("#chart");
   const legend = $("#legend");
-  if (!rows.length) {
+  const validRows = rows.filter((row) => Number.isFinite(priceValue(row)));
+  if (!validRows.length) {
     chart.innerHTML = `<div class="empty">No observations match this cohort and date range.</div>`;
     legend.innerHTML = "";
     return;
@@ -986,13 +992,13 @@ function renderChart(rows) {
   const width = 1120;
   const height = 420;
   const pad = { left: 58, right: 24, top: 25, bottom: 42 };
-  const dates = rows.map((row) => new Date(row.observedAt).getTime());
+  const dates = validRows.map((row) => new Date(row.observedAt).getTime());
   const minX = Math.min(...dates);
   const maxX = Math.max(...dates);
-  const maxPrice = Math.ceil(Math.max(...rows.map((row) => row.pricePerGpuHour)) * 1.1);
+  const maxPrice = Math.ceil(Math.max(...validRows.map(priceValue)) * 1.1);
   const x = (value) => pad.left + ((value - minX) / (maxX - minX || 1)) * (width - pad.left - pad.right);
   const y = (value) => height - pad.bottom - (value / maxPrice) * (height - pad.top - pad.bottom);
-  const models = [...new Set(rows.map((row) => row.gpuModel))];
+  const models = [...new Set(validRows.map((row) => row.gpuModel))];
 
   const grid = Array.from({ length: 6 }, (_, index) => {
     const value = (maxPrice / 5) * index;
@@ -1009,14 +1015,14 @@ function renderChart(rows) {
 
   const series = models.map((model, index) => {
     const color = state.colors[index % state.colors.length];
-    const modelRows = rows
+    const modelRows = validRows
       .filter((row) => row.gpuModel === model)
       .toSorted((a, b) => new Date(a.observedAt) - new Date(b.observedAt));
     const path = modelRows.map((row, pointIndex) =>
-      `${pointIndex ? "L" : "M"} ${x(new Date(row.observedAt).getTime())} ${y(row.pricePerGpuHour)}`
+      `${pointIndex ? "L" : "M"} ${x(new Date(row.observedAt).getTime())} ${y(priceValue(row))}`
     ).join(" ");
     const points = modelRows.map((row) => `
-      <circle class="point" cx="${x(new Date(row.observedAt).getTime())}" cy="${y(row.pricePerGpuHour)}" r="3.4"
+      <circle class="point" cx="${x(new Date(row.observedAt).getTime())}" cy="${y(priceValue(row))}" r="3.4"
         fill="${color}" data-rate='${JSON.stringify(row).replaceAll("'", "&#39;")}' />`).join("");
     return `<path class="series-line" d="${path}" stroke="${color}" />${points}`;
   }).join("");
@@ -1035,7 +1041,7 @@ function attachTooltips() {
       const tooltip = document.createElement("div");
       tooltip.className = "tooltip";
       tooltip.innerHTML = `<strong>${row.gpuModel}</strong>
-        ${money(row.pricePerGpuHour)} / GPU-hour<br>
+        ${priceText(row.pricePerGpuHour)} / GPU-hour<br>
         ${shortDate(row.observedAt)}<br>
         <span style="color:#aeb6af">${escapeHtml(aggregationText(row.aggregation))}</span>`;
       document.body.appendChild(tooltip);
@@ -1087,12 +1093,13 @@ function renderRuns() {
 }
 
 function renderTable(rows) {
-  const latest = latestByModel(rows).toSorted((a, b) => b.pricePerGpuHour - a.pricePerGpuHour);
+  const latest = latestByModel(rows.filter((row) => Number.isFinite(priceValue(row))))
+    .toSorted((a, b) => priceValue(b) - priceValue(a));
   $("#ratesTable").innerHTML = latest.map((row) => `<tr>
     <td><strong>${row.gpuModel}</strong></td>
     <td>${groupLabels[row.group] || row.group}</td>
     <td>${shortDate(row.observedAt)}</td>
-    <td class="rate">${money(row.pricePerGpuHour)}</td>
+    <td class="rate">${priceText(row.pricePerGpuHour)}</td>
     <td>${escapeHtml(aggregationText(row.aggregation))}${row.directObservationCount ? ` · ${row.directObservationCount} rows` : ""}</td>
     <td><button class="link-button" type="button" data-source-row='${JSON.stringify(row).replaceAll("'", "&#39;")}'>Inspect</button></td>
   </tr>`).join("") || `<tr><td colspan="6">No matching observations.</td></tr>`;

@@ -64,9 +64,13 @@ const insert = db.prepare(`
 `);
 
 export function saveRates(rates) {
+  const validRates = rates.filter((rate) => {
+    const price = Number(rate.pricePerGpuHour);
+    return Number.isFinite(price) && price > 0;
+  });
   db.exec("BEGIN");
   try {
-    for (const rate of rates) {
+    for (const rate of validRates) {
       insert.run(
         rate.observedAt,
         rate.provider,
@@ -87,12 +91,13 @@ export function saveRates(rates) {
     db.exec("ROLLBACK");
     throw error;
   }
-  return rates.length;
+  return validRates.length;
 }
 
 export function listRates(filters = {}) {
   const clauses = [];
   const values = [];
+  clauses.push("price_per_gpu_hour > 0");
   for (const [column, value] of [
     ["gpu_model", filters.gpu],
     ["provider", filters.provider],
@@ -113,7 +118,7 @@ export function listRates(filters = {}) {
     clauses.push("observed_at <= ?");
     values.push(filters.to);
   }
-  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const where = `WHERE ${clauses.join(" AND ")}`;
   return db.prepare(`
     SELECT
       id, observed_at AS observedAt, provider, provider_type AS providerType,
@@ -139,6 +144,9 @@ const DASHBOARD_RATE_SELECT = `
 `;
 
 function dashboardExactRows(whereClause = "", values = [], rankLimit = 1) {
+  const validWhereClause = whereClause
+    ? `${whereClause} AND price_per_gpu_hour > 0`
+    : "WHERE price_per_gpu_hour > 0";
   return db.prepare(`
     WITH ranked AS (
       SELECT ${DASHBOARD_RATE_COLUMNS},
@@ -147,7 +155,7 @@ function dashboardExactRows(whereClause = "", values = [], rankLimit = 1) {
                ORDER BY observed_at DESC, id DESC
              ) AS rank
       FROM rates
-      ${whereClause}
+      ${validWhereClause}
     )
     SELECT ${DASHBOARD_RATE_SELECT}
     FROM ranked
@@ -164,6 +172,7 @@ function dashboardMonthlyRows() {
                ORDER BY observed_at DESC, id DESC
              ) AS rank
       FROM rates
+      WHERE price_per_gpu_hour > 0
     )
     SELECT ${DASHBOARD_RATE_SELECT}
     FROM ranked
@@ -194,7 +203,7 @@ function dashboardChartAggregateRows(generatedAt) {
       COUNT(*) AS directObservationCount,
       COUNT(DISTINCT region) AS regionCount
     FROM rates
-    WHERE commitment = 'on-demand' AND observed_at >= ?
+    WHERE commitment = 'on-demand' AND observed_at >= ? AND price_per_gpu_hour > 0
     GROUP BY substr(observed_at, 1, 7), provider, provider_type, gpu_model
     ORDER BY observedAt, provider, gpuModel
   `).all(cutoff);
@@ -259,12 +268,12 @@ export function metadata() {
   const providers = db.prepare(`
     SELECT provider, provider_type AS providerType, COUNT(*) AS observations,
            MAX(observed_at) AS latestObservation
-    FROM rates GROUP BY provider ORDER BY provider_type, provider
+    FROM rates WHERE price_per_gpu_hour > 0 GROUP BY provider ORDER BY provider_type, provider
   `).all();
-  const gpus = db.prepare("SELECT DISTINCT gpu_model AS gpuModel FROM rates ORDER BY gpu_model").all();
-  const regions = db.prepare("SELECT DISTINCT region FROM rates ORDER BY region").all();
-  const commitments = db.prepare("SELECT DISTINCT commitment FROM rates ORDER BY commitment").all();
-  const range = db.prepare("SELECT MIN(observed_at) AS first, MAX(observed_at) AS last, COUNT(*) AS count FROM rates").get();
+  const gpus = db.prepare("SELECT DISTINCT gpu_model AS gpuModel FROM rates WHERE price_per_gpu_hour > 0 ORDER BY gpu_model").all();
+  const regions = db.prepare("SELECT DISTINCT region FROM rates WHERE price_per_gpu_hour > 0 ORDER BY region").all();
+  const commitments = db.prepare("SELECT DISTINCT commitment FROM rates WHERE price_per_gpu_hour > 0 ORDER BY commitment").all();
+  const range = db.prepare("SELECT MIN(observed_at) AS first, MAX(observed_at) AS last, COUNT(*) AS count FROM rates WHERE price_per_gpu_hour > 0").get();
   const runs = db.prepare(`
     SELECT provider, started_at AS startedAt, finished_at AS finishedAt, status,
            records_found AS recordsFound, message

@@ -19,6 +19,11 @@ const CHART_COLORS = ["#174f3a", "#e57b42", "#5677df", "#8d65c5", "#b18b2f", "#d
 const money = (value) => `$${Number(value).toFixed(2)}`;
 const percent = (value) => `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`;
 
+function priceValue(rate) {
+  const price = Number(rate.pricePerGpuHour);
+  return Number.isFinite(price) && price > 0 ? price : null;
+}
+
 function rateKey(rate) {
   return [rate.provider, rate.gpuModel, rate.gpuVariant, rate.region, rate.commitment].join("|");
 }
@@ -28,7 +33,7 @@ function observedTime(rate) {
 }
 
 function isAnalysisRate(rate) {
-  return rate.commitment === ANALYSIS_COMMITMENT && Number.isFinite(rate.pricePerGpuHour);
+  return rate.commitment === ANALYSIS_COMMITMENT && Number.isFinite(priceValue(rate));
 }
 
 function average(values) {
@@ -51,6 +56,7 @@ function pctChange(current, previous) {
 function latestRateMap(rates, cutoff = Infinity) {
   const latest = new Map();
   for (const rate of rates) {
+    if (!Number.isFinite(priceValue(rate))) continue;
     const time = observedTime(rate);
     if (time > cutoff) continue;
     const key = rateKey(rate);
@@ -64,15 +70,17 @@ function enrichChanges(scrapedRates, previousRates) {
   const previousByKey = latestRateMap(previousRates);
   return scrapedRates.map((rate) => {
     const previous = previousByKey.get(rateKey(rate));
-    const delta = previous ? rate.pricePerGpuHour - previous.pricePerGpuHour : null;
-    const deltaPercent = previous && previous.pricePerGpuHour
-      ? (delta / previous.pricePerGpuHour) * 100
+    const currentPrice = priceValue(rate);
+    const previousPrice = previous ? priceValue(previous) : null;
+    const delta = Number.isFinite(currentPrice) && Number.isFinite(previousPrice) ? currentPrice - previousPrice : null;
+    const deltaPercent = Number.isFinite(delta) && Number.isFinite(previousPrice)
+      ? (delta / previousPrice) * 100
       : null;
     return { ...rate, previous, delta, deltaPercent };
   }).toSorted((a, b) =>
     a.provider.localeCompare(b.provider) ||
     a.gpuModel.localeCompare(b.gpuModel) ||
-    a.pricePerGpuHour - b.pricePerGpuHour
+    (priceValue(a) ?? Infinity) - (priceValue(b) ?? Infinity)
   );
 }
 
@@ -102,8 +110,8 @@ function matchedComparison(rows, previousRates, cutoff) {
     .filter((pair) => pair.previous);
   if (!pairs.length) return null;
 
-  const currentAverage = average(pairs.map((pair) => pair.current.pricePerGpuHour));
-  const previousAverage = average(pairs.map((pair) => pair.previous.pricePerGpuHour));
+  const currentAverage = average(pairs.map((pair) => priceValue(pair.current)));
+  const previousAverage = average(pairs.map((pair) => priceValue(pair.previous)));
   return {
     change: pctChange(currentAverage, previousAverage),
     matched: pairs.length
@@ -131,7 +139,7 @@ function gpuMovementRows(currentRows, previousRates, generatedAt) {
     }));
     return {
       gpuModel,
-      averagePrice: average(rows.map((rate) => rate.pricePerGpuHour)),
+      averagePrice: average(rows.map(priceValue)),
       observations: rows.length,
       providerCount: providers.size,
       regionCount: regions.size,
@@ -185,11 +193,11 @@ function regionGroup(region = "") {
 function regionalHeatmap(currentRows, gpuOrder) {
   return gpuOrder.slice(0, 10).map((gpuModel) => {
     const rows = currentRows.filter((rate) => rate.gpuModel === gpuModel);
-    const modelMedian = median(rows.map((rate) => rate.pricePerGpuHour));
+    const modelMedian = median(rows.map(priceValue));
     const cells = Object.fromEntries(REGION_GROUPS.map((group) => {
       const groupAverage = average(rows
         .filter((rate) => regionGroup(rate.region) === group)
-        .map((rate) => rate.pricePerGpuHour));
+        .map(priceValue));
       return [group, {
         averagePrice: groupAverage,
         relativeToMedian: modelMedian && groupAverage ? groupAverage / modelMedian : null
@@ -232,7 +240,7 @@ function trendSeries(allRates, gpuModels, generatedAt) {
   for (const rate of latestByMonthKey.values()) {
     const key = `${rate.gpuModel}|${rate.observedAt.slice(0, 7)}`;
     if (!buckets.has(key)) buckets.set(key, []);
-    buckets.get(key).push(rate.pricePerGpuHour);
+    buckets.get(key).push(priceValue(rate));
   }
 
   return {
@@ -277,7 +285,7 @@ function heatCellStyle(ratio) {
 function renderMovementTable(rows) {
   const body = rows.map((row) => `<tr>
     <td style="padding:8px;border-bottom:1px solid #e5e2d6;font-weight:700;">${htmlEscape(row.gpuModel)}</td>
-    <td style="padding:8px;border-bottom:1px solid #e5e2d6;text-align:right;">${money(row.averagePrice)}</td>
+    <td style="padding:8px;border-bottom:1px solid #e5e2d6;text-align:right;">${formatMaybe(row.averagePrice, money)}</td>
     <td style="padding:8px;border-bottom:1px solid #e5e2d6;text-align:right;">${row.observations}</td>
     <td style="padding:8px;border-bottom:1px solid #e5e2d6;text-align:right;">${row.providerCount}</td>
     ${LOOKBACKS.map((lookback) => {
@@ -301,7 +309,7 @@ function renderMovementTable(rows) {
 }
 
 function moverLabel(rate) {
-  const movement = `${money(rate.previous.pricePerGpuHour)} -> ${money(rate.pricePerGpuHour)} (${percent(rate.deltaPercent)})`;
+  const movement = `${formatMaybe(priceValue(rate.previous), money)} -> ${formatMaybe(priceValue(rate), money)} (${percent(rate.deltaPercent)})`;
   return `${rate.provider} ${rate.gpuModel} ${rate.region}: ${movement}`;
 }
 
@@ -310,8 +318,8 @@ function renderMoverTable(title, rows) {
     <td style="padding:7px;border-bottom:1px solid #e5e2d6;">${htmlEscape(rate.provider)}</td>
     <td style="padding:7px;border-bottom:1px solid #e5e2d6;font-weight:700;">${htmlEscape(rate.gpuModel)}</td>
     <td style="padding:7px;border-bottom:1px solid #e5e2d6;">${htmlEscape(rate.region)}</td>
-    <td style="padding:7px;border-bottom:1px solid #e5e2d6;text-align:right;">${money(rate.previous.pricePerGpuHour)}</td>
-    <td style="padding:7px;border-bottom:1px solid #e5e2d6;text-align:right;">${money(rate.pricePerGpuHour)}</td>
+    <td style="padding:7px;border-bottom:1px solid #e5e2d6;text-align:right;">${formatMaybe(priceValue(rate.previous), money)}</td>
+    <td style="padding:7px;border-bottom:1px solid #e5e2d6;text-align:right;">${formatMaybe(priceValue(rate), money)}</td>
     <td style="padding:7px;border-bottom:1px solid #e5e2d6;text-align:right;${pctCellStyle(rate.deltaPercent)}">${percent(rate.deltaPercent)}</td>
   </tr>`).join("");
 
@@ -439,7 +447,7 @@ function renderHtml({ digest, failures, generatedAt, results, collected }) {
 function renderText({ digest, failures, generatedAt, collected }) {
   const movementLines = digest.movementRows.map((row) => {
     const moves = LOOKBACKS.map((lookback) => `${lookback.label}: ${formatMaybe(row.comparisons[lookback.key]?.change, percent)}`).join(", ");
-    return `- ${row.gpuModel}: ${money(row.averagePrice)} avg across ${row.observations} rows (${moves})`;
+    return `- ${row.gpuModel}: ${formatMaybe(row.averagePrice, money)} avg across ${row.observations} rows (${moves})`;
   });
   const dropLines = digest.movers.drops.map((rate) => `- ${moverLabel(rate)}`);
   const increaseLines = digest.movers.increases.map((rate) => `- ${moverLabel(rate)}`);

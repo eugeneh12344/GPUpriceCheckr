@@ -27,7 +27,7 @@ const PUBLIC = join(ROOT, "public");
 const PORT = Number(process.env.PORT || 3000);
 const DASHBOARD_CACHE_MS = 5 * 60 * 1000;
 const DASHBOARD_CACHE_FILE = join(DATA_DIR, "dashboard-payload-cache.json");
-const DASHBOARD_CACHE_VERSION = 3;
+const DASHBOARD_CACHE_VERSION = 4;
 const BROTLI_OPTIONS = { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 4 } };
 const GZIP_OPTIONS = { level: 6 };
 let dashboardCache = null;
@@ -219,11 +219,11 @@ async function api(req, res, url) {
     const runId = startRun(`${input.provider}:archive`);
     try {
       const rates = await importArchive(input.provider, input);
-      saveRates(rates);
-      finishRun(runId, "success", rates.length);
+      const saved = saveRates(rates);
+      finishRun(runId, "success", saved);
       clearDashboardCache();
       await refreshDashboardCache();
-      return json(req, res, 200, { records: rates.length });
+      return json(req, res, 200, { records: saved });
     } catch (error) {
       finishRun(runId, "failed", 0, error.message);
       return json(req, res, 422, { error: error.message });

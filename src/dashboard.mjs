@@ -41,7 +41,8 @@ function observedTime(row) {
 }
 
 function priceValue(row) {
-  return Number(row.pricePerGpuHour);
+  const price = Number(row.pricePerGpuHour);
+  return Number.isFinite(price) && price > 0 ? price : null;
 }
 
 function rateKey(row) {
@@ -66,6 +67,7 @@ function groupBy(values, keyFn) {
 function latestRateMap(rates, cutoff = Infinity) {
   const latest = new Map();
   for (const row of rates) {
+    if (!Number.isFinite(priceValue(row))) continue;
     const time = observedTime(row);
     if (!Number.isFinite(time) || time > cutoff) continue;
     const key = rateKey(row);
@@ -303,7 +305,7 @@ function commitmentDiscountRows(rows) {
 }
 
 function latestPriceTimestamp(rates) {
-  const validRows = rates.filter((row) => Number.isFinite(observedTime(row)));
+  const validRows = rates.filter((row) => Number.isFinite(observedTime(row)) && Number.isFinite(priceValue(row)));
   const liveRows = validRows.filter((row) => row.sourceKind === "live");
   const sourceRows = liveRows.length ? liveRows : validRows.filter((row) => row.sourceKind !== "benchmark-seed");
   const rows = sourceRows.length ? sourceRows : validRows;
@@ -331,7 +333,7 @@ export function buildDashboardSummary({ meta, rates, chartRates = rates, panelRa
       sources: meta.providers?.length || new Set(rates.map((row) => row.provider)).size
     },
     chartRows,
-    tableRows: latestByModel(fullChartRows).toSorted((a, b) => b.pricePerGpuHour - a.pricePerGpuHour),
+    tableRows: latestByModel(fullChartRows).toSorted((a, b) => priceValue(b) - priceValue(a)),
     movementRows: movementRows(currentRows, onDemandRows, generatedAt),
     heatmapRows: regionalHeatmapRows(currentRows),
     topMoverRows: topMoverRows(currentRows, onDemandRows),

@@ -22,11 +22,12 @@ test("dashboard summary keeps first-load chart payload slim", () => {
   const rates = [
     rate({ observedAt: "2026-05-28T12:00:00.000Z", pricePerGpuHour: 5 }),
     rate({ pricePerGpuHour: 4 }),
+    rate({ provider: "Zero Cloud", region: "us-west-2", pricePerGpuHour: 0 }),
     rate({ provider: "Google Cloud", region: "europe-west1", pricePerGpuHour: 6 }),
     rate({ provider: "Azure", gpuModel: "B200", region: "eastus", pricePerGpuHour: 8 })
   ];
   const meta = {
-    range: { count: rates.length },
+    range: { count: rates.length - 1 },
     gpus: ["H100", "B200"],
     regions: ["us-east-1", "europe-west1", "eastus"],
     providers: [{ provider: "AWS" }, { provider: "Google Cloud" }, { provider: "Azure" }]
@@ -39,7 +40,7 @@ test("dashboard summary keeps first-load chart payload slim", () => {
   });
 
   assert.equal(summary.freshness.latestPricePull, "2026-06-28T12:00:00.000Z");
-  assert.equal(summary.hero.observations, rates.length);
+  assert.equal(summary.hero.observations, rates.length - 1);
   assert.equal(summary.hero.gpus, 2);
   assert.ok(summary.chartRows.length);
   assert.equal(summary.chartRows.some((row) => "sourceName" in row), false);
@@ -48,7 +49,9 @@ test("dashboard summary keeps first-load chart payload slim", () => {
   const h100 = summary.tableRows.find((row) => row.gpuModel === "H100");
   assert.equal(h100.directObservationCount, 2);
   assert.equal(h100.providerCount, 2);
-  assert.ok(summary.movementRows.some((row) => row.gpuModel === "H100"));
+  const h100Movement = summary.movementRows.find((row) => row.gpuModel === "H100");
+  assert.equal(h100Movement.observations, 2);
+  assert.equal(h100Movement.averagePrice, 5);
 
   const h100Heatmap = summary.heatmapRows.find((row) => row.gpuModel === "H100");
   assert.equal(h100Heatmap.cells["North America"].averagePrice, 4);

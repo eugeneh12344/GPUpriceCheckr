@@ -26,6 +26,7 @@ test("daily report digest summarizes movement and new rows", () => {
   ];
   const scrapedRates = [
     baseRate({ pricePerGpuHour: 4.2 }),
+    baseRate({ provider: "Zero Cloud", region: "us-west-2", pricePerGpuHour: 0 }),
     baseRate({ provider: "Google Cloud", region: "us-central1", pricePerGpuHour: 4.8 }),
     baseRate({ provider: "Azure", gpuModel: "B200", region: "eastus", pricePerGpuHour: 6.2 })
   ];
