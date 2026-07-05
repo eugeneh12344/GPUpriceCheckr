@@ -496,11 +496,11 @@ td a {
   font-weight: 800;
 }
 
-.heat-cell.cheap-2 { color: #06140d; background: #4ade80; }
-.heat-cell.cheap-1 { color: #e5ffe9; background: #187545; }
-.heat-cell.mid { color: #fff3c4; background: #806915; }
-.heat-cell.hot-1 { color: #ffe2ca; background: #9a4a14; }
-.heat-cell.hot-2 { color: #ffe6eb; background: #a91d3a; }
+.heat-cell.cheap-2 { color: #ffffff; background: #1a9850; }
+.heat-cell.cheap-1 { color: #102711; background: #91cf60; }
+.heat-cell.mid { color: #352900; background: #fee08b; }
+.heat-cell.hot-1 { color: #3b1507; background: #fc8d59; }
+.heat-cell.hot-2 { color: #fff5f4; background: #d73027; }
 .heat-cell.empty { color: #717a84; background: #1a1d20; font-weight: 650; }
 
 .mover-list,
