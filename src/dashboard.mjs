@@ -12,6 +12,7 @@ const GROUPS = {
   modern: ["H100", "H200", "GH200", "A100", "L40S", "L40", "L4", "A10", "RTX 4090"],
   legacy: ["V100", "P100", "T4"]
 };
+const DEFAULT_GPU_MODELS = ["H100", "H200", "GH200", "B200", "B300", "GB200", "GB300"];
 const GPU_PRIORITY = ["H100", "H200", "B200", "B300", "GB200", "GB300", "GH200", "MI300X", "A100", "L40S", "L40", "L4", "A10", "RTX 5090", "RTX 4090", "T4", "V100", "P100"];
 
 function groupForGpu(gpuModel) {
@@ -52,6 +53,10 @@ function rateKey(row) {
 function priorityIndex(gpuModel) {
   const index = GPU_PRIORITY.indexOf(gpuModel);
   return index === -1 ? GPU_PRIORITY.length : index;
+}
+
+function isDefaultGpu(gpuModel) {
+  return DEFAULT_GPU_MODELS.includes(gpuModel);
 }
 
 function groupBy(values, keyFn) {
@@ -113,6 +118,10 @@ function regionGroup(region = "") {
 
 function monthKey(date) {
   return new Date(date).toISOString().slice(0, 7);
+}
+
+function dayKey(date) {
+  return new Date(date).toISOString().slice(0, 10);
 }
 
 function latestByModel(rows) {
@@ -191,6 +200,44 @@ function movementRows(currentRows, allRates, generatedAt) {
   })).toSorted((a, b) =>
     priorityIndex(a.gpuModel) - priorityIndex(b.gpuModel) ||
     b.observations - a.observations ||
+    a.gpuModel.localeCompare(b.gpuModel)
+  );
+}
+
+function directDailyIndexObservations(rates) {
+  const groups = new Map();
+  for (const row of rates) {
+    if (!Number.isFinite(priceValue(row))) continue;
+    const day = dayKey(row.observedAt);
+    const key = `${day}|${row.gpuModel}`;
+    const group = groups.get(key) || {
+      day,
+      gpuModel: row.gpuModel,
+      providerPrices: new Map()
+    };
+    const providerRows = group.providerPrices.get(row.provider) || [];
+    providerRows.push(priceValue(row));
+    group.providerPrices.set(row.provider, providerRows);
+    groups.set(key, group);
+  }
+
+  return [...groups.values()].flatMap((group) => {
+    const price = median([...group.providerPrices.values()].map(median).filter((value) => value != null));
+    if (price == null) return [];
+    return [{
+      observedAt: `${group.day}T00:00:00.000Z`,
+      gpuModel: group.gpuModel,
+      group: groupForGpu(group.gpuModel),
+      pricePerGpuHour: price,
+      currency: "USD",
+      aggregation: "daily-median-of-provider-medians",
+      billingType: "spot",
+      directObservationCount: [...group.providerPrices.values()].reduce((sum, rows) => sum + rows.length, 0),
+      providerCount: group.providerPrices.size,
+      commitment: "spot"
+    }];
+  }).toSorted((a, b) =>
+    new Date(a.observedAt) - new Date(b.observedAt) ||
     a.gpuModel.localeCompare(b.gpuModel)
   );
 }
@@ -314,15 +361,27 @@ function latestPriceTimestamp(rates) {
 
 export function buildDashboardSummary({ meta, rates, chartRates = rates, panelRates = rates, generatedAt = new Date() }) {
   const onDemandRows = panelRates.filter((row) => row.commitment === "on-demand");
-  const currentRows = [...latestRateMap(onDemandRows).values()];
+  const currentRows = [...latestRateMap(onDemandRows).values()].filter((row) => isDefaultGpu(row.gpuModel));
+  const spotRows = panelRates.filter((row) => row.commitment === "spot");
+  const currentSpotRows = [...latestRateMap(spotRows).values()].filter((row) => isDefaultGpu(row.gpuModel));
   const chartCutoff = new Date(Date.UTC(generatedAt.getUTCFullYear(), generatedAt.getUTCMonth() - 24, 1));
-  const fullChartRows = directIndexObservations(chartRates).filter((row) => new Date(row.observedAt) >= chartCutoff);
+  const fullChartRows = directIndexObservations(chartRates.filter((row) => row.commitment === "on-demand"))
+    .filter((row) => isDefaultGpu(row.gpuModel) && new Date(row.observedAt) >= chartCutoff);
+  const fullSpotChartRows = directDailyIndexObservations(chartRates.filter((row) => row.commitment === "spot"))
+    .filter((row) => isDefaultGpu(row.gpuModel) && new Date(row.observedAt) >= chartCutoff);
   const chartRows = fullChartRows.map((row) => ({
     observedAt: row.observedAt,
     gpuModel: row.gpuModel,
     group: row.group,
     pricePerGpuHour: row.pricePerGpuHour
   }));
+  const spotChartRows = fullSpotChartRows.map((row) => ({
+    observedAt: row.observedAt,
+    gpuModel: row.gpuModel,
+    group: row.group,
+    pricePerGpuHour: row.pricePerGpuHour
+  }));
+  const defaultPanelRates = panelRates.filter((row) => isDefaultGpu(row.gpuModel));
 
   return {
     freshness: { latestPricePull: latestPriceTimestamp(panelRates.length ? panelRates : rates) },
@@ -335,10 +394,12 @@ export function buildDashboardSummary({ meta, rates, chartRates = rates, panelRa
     chartRows,
     tableRows: latestByModel(fullChartRows).toSorted((a, b) => priceValue(b) - priceValue(a)),
     movementRows: movementRows(currentRows, onDemandRows, generatedAt),
+    spotChartRows,
+    spotMovementRows: movementRows(currentSpotRows, spotRows, generatedAt),
     heatmapRows: regionalHeatmapRows(currentRows),
     topMoverRows: topMoverRows(currentRows, onDemandRows),
     cheapestRows: cheapestRegionRows(currentRows),
     providerSpreadRows: providerSpreadRows(currentRows),
-    commitmentRows: commitmentDiscountRows(panelRates)
+    commitmentRows: commitmentDiscountRows(defaultPanelRates)
   };
 }

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Track hyperscaler and neocloud GPU rental rates over time." />
     <title>GPU Rental Rate Index</title>
-    <link rel="stylesheet" href="/styles.css?v=20260705-heatmap-colors" />
+    <link rel="stylesheet" href="/styles.css?v=20260706-spot-frontier" />
   </head>
   <body>
     <header class="topbar">
@@ -97,6 +97,17 @@
             </div>
           </div>
           <div id="movementTable" class="movement-table"></div>
+        </article>
+
+        <article class="panel viz-panel spot-panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Short-term market</p>
+              <h2>Spot price movement</h2>
+            </div>
+            <div id="spotLegend" class="legend"></div>
+          </div>
+          <div id="spotChart" class="chart spot-chart" role="img" aria-label="Spot GPU rental price line chart"></div>
         </article>
 
         <article class="panel viz-panel heatmap-panel">
@@ -199,6 +210,6 @@
     </dialog>
 
     <div id="toast" class="toast" aria-live="polite"></div>
-    <script type="module" src="/app.js?v=20260705-zero-na"></script>
+    <script type="module" src="/app.js?v=20260706-spot-frontier"></script>
   </body>
 </html>

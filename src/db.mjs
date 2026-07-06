@@ -180,22 +180,25 @@ function dashboardMonthlyRows() {
   `).all();
 }
 
-function dashboardChartAggregateRows(generatedAt) {
+function dashboardChartAggregateRows(generatedAt, commitment = "on-demand", bucket = "month") {
   const cutoff = new Date(Date.UTC(
     generatedAt.getUTCFullYear(),
     generatedAt.getUTCMonth() - 25,
     1
   )).toISOString();
+  const observedBucket = bucket === "day"
+    ? "substr(observed_at, 1, 10) || 'T00:00:00.000Z'"
+    : "substr(observed_at, 1, 7) || '-01T00:00:00.000Z'";
 
   return db.prepare(`
     SELECT
-      substr(observed_at, 1, 7) || '-01T00:00:00.000Z' AS observedAt,
+      ${observedBucket} AS observedAt,
       provider,
       provider_type AS providerType,
       gpu_model AS gpuModel,
       '' AS gpuVariant,
       'dashboard aggregate' AS region,
-      'on-demand' AS commitment,
+      ? AS commitment,
       AVG(price_per_gpu_hour) AS pricePerGpuHour,
       'USD' AS currency,
       MIN(source_url) AS sourceUrl,
@@ -203,10 +206,10 @@ function dashboardChartAggregateRows(generatedAt) {
       COUNT(*) AS directObservationCount,
       COUNT(DISTINCT region) AS regionCount
     FROM rates
-    WHERE commitment = 'on-demand' AND observed_at >= ? AND price_per_gpu_hour > 0
-    GROUP BY substr(observed_at, 1, 7), provider, provider_type, gpu_model
+    WHERE commitment = ? AND observed_at >= ? AND price_per_gpu_hour > 0
+    GROUP BY ${observedBucket}, provider, provider_type, gpu_model
     ORDER BY observedAt, provider, gpuModel
-  `).all(cutoff);
+  `).all(commitment, commitment, cutoff);
 }
 
 function dashboardSummaryPanelRows(generatedAt) {
@@ -259,7 +262,10 @@ export function dashboardRates(generatedAt = new Date()) {
 
 export function dashboardSummaryData(generatedAt = new Date()) {
   return {
-    chartRates: dashboardChartAggregateRows(generatedAt),
+    chartRates: [
+      ...dashboardChartAggregateRows(generatedAt, "on-demand"),
+      ...dashboardChartAggregateRows(generatedAt, "spot", "day")
+    ],
     panelRates: dashboardSummaryPanelRows(generatedAt)
   };
 }

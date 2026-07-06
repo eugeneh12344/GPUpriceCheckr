@@ -24,11 +24,14 @@ test("dashboard summary keeps first-load chart payload slim", () => {
     rate({ pricePerGpuHour: 4 }),
     rate({ provider: "Zero Cloud", region: "us-west-2", pricePerGpuHour: 0 }),
     rate({ provider: "Google Cloud", region: "europe-west1", pricePerGpuHour: 6 }),
-    rate({ provider: "Azure", gpuModel: "B200", region: "eastus", pricePerGpuHour: 8 })
+    rate({ provider: "Azure", gpuModel: "B200", region: "eastus", pricePerGpuHour: 8 }),
+    rate({ provider: "AWS", gpuModel: "A100", region: "us-east-1", pricePerGpuHour: 2 }),
+    rate({ provider: "Google Cloud", observedAt: "2026-06-27T12:00:00.000Z", commitment: "spot", pricePerGpuHour: 3.5 }),
+    rate({ provider: "Google Cloud", commitment: "spot", pricePerGpuHour: 3 })
   ];
   const meta = {
     range: { count: rates.length - 1 },
-    gpus: ["H100", "B200"],
+    gpus: ["H100", "B200", "A100"],
     regions: ["us-east-1", "europe-west1", "eastus"],
     providers: [{ provider: "AWS" }, { provider: "Google Cloud" }, { provider: "Azure" }]
   };
@@ -41,8 +44,9 @@ test("dashboard summary keeps first-load chart payload slim", () => {
 
   assert.equal(summary.freshness.latestPricePull, "2026-06-28T12:00:00.000Z");
   assert.equal(summary.hero.observations, rates.length - 1);
-  assert.equal(summary.hero.gpus, 2);
+  assert.equal(summary.hero.gpus, 3);
   assert.ok(summary.chartRows.length);
+  assert.equal(summary.chartRows.some((row) => row.gpuModel === "A100"), false);
   assert.equal(summary.chartRows.some((row) => "sourceName" in row), false);
   assert.equal(summary.chartRows.some((row) => "aggregation" in row), false);
 
@@ -52,6 +56,14 @@ test("dashboard summary keeps first-load chart payload slim", () => {
   const h100Movement = summary.movementRows.find((row) => row.gpuModel === "H100");
   assert.equal(h100Movement.observations, 2);
   assert.equal(h100Movement.averagePrice, 5);
+  assert.equal(summary.movementRows.some((row) => row.gpuModel === "A100"), false);
+  assert.deepEqual(
+    summary.spotChartRows.map((row) => [row.observedAt, row.gpuModel, row.pricePerGpuHour]),
+    [
+      ["2026-06-27T00:00:00.000Z", "H100", 3.5],
+      ["2026-06-28T00:00:00.000Z", "H100", 3]
+    ]
+  );
 
   const h100Heatmap = summary.heatmapRows.find((row) => row.gpuModel === "H100");
   assert.equal(h100Heatmap.cells["North America"].averagePrice, 4);

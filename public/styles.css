@@ -276,6 +276,7 @@ select:disabled {
 }
 .trend-panel { grid-column: span 7; }
 .movement-panel { grid-column: span 5; }
+.spot-panel { grid-column: span 12; }
 .heatmap-panel { grid-column: span 8; }
 .movers-panel { grid-column: span 4; }
 .cheapest-panel { grid-column: span 5; }
@@ -306,6 +307,12 @@ select:disabled {
   display: block;
   width: 100%;
   height: 420px;
+}
+
+.spot-chart,
+.spot-chart svg {
+  min-height: 320px;
+  height: 320px;
 }
 
 .grid-line {
@@ -885,6 +892,7 @@ td a {
   .segmented { justify-content: space-between; }
   .trend-panel,
   .movement-panel,
+  .spot-panel,
   .heatmap-panel,
   .movers-panel,
   .cheapest-panel,
@@ -907,6 +915,7 @@ td a {
   .viz-grid { grid-template-columns: 1fr; }
   .trend-panel,
   .movement-panel,
+  .spot-panel,
   .heatmap-panel,
   .movers-panel,
   .cheapest-panel,

@@ -47,6 +47,8 @@ const GROUPS = {
   modern: ["H100", "H200", "GH200", "A100", "L40S", "L40", "L4", "A10", "RTX 4090"],
   legacy: ["V100", "P100", "T4"]
 };
+const DEFAULT_GPU_COHORT = "frontier";
+const DEFAULT_GPU_MODELS = ["H100", "H200", "GH200", "B200", "B300", "GB200", "GB300"];
 const groupLabels = { modern: "Modern", "last-released": "Latest", legacy: "Legacy", other: "Other" };
 const DAY_MS = 24 * 60 * 60 * 1000;
 const LOOKBACKS = [
@@ -61,6 +63,12 @@ const GPU_PRIORITY = ["H100", "H200", "B200", "B300", "GB200", "GB300", "GH200",
 
 function groupForGpu(gpuModel) {
   return Object.entries(GROUPS).find(([, models]) => models.includes(gpuModel))?.[0] || "other";
+}
+
+function matchesGpuCohort(gpuModel, cohort) {
+  if (cohort === "all") return true;
+  if (cohort === "frontier") return DEFAULT_GPU_MODELS.includes(gpuModel);
+  return groupForGpu(gpuModel) === cohort;
 }
 
 function median(values) {
@@ -206,6 +214,8 @@ function showLoadError(error) {
   $("#chart").innerHTML = `<div class="empty">Dashboard data did not load. ${escapeHtml(error.message)}</div>`;
   $("#movementTable").innerHTML = `<div class="empty compact-empty">No data loaded.</div>`;
   $("#regionHeatmap").innerHTML = `<div class="empty compact-empty">No data loaded.</div>`;
+  $("#spotChart").innerHTML = `<div class="empty compact-empty">No data loaded.</div>`;
+  $("#spotLegend").innerHTML = "";
   $("#topMovers").innerHTML = `<div class="empty compact-empty">No data loaded.</div>`;
   $("#cheapestRegions").innerHTML = `<div class="empty compact-empty">No data loaded.</div>`;
   $("#providerSpread").innerHTML = `<div class="empty compact-empty">No data loaded.</div>`;
@@ -251,6 +261,7 @@ async function ensureModelIndex() {
 function populateControls() {
   const gpuCount = state.meta.gpus?.length || state.dashboard?.hero?.gpus || new Set(state.rates.map((row) => row.gpuModel)).size;
   const cohorts = [
+    ["frontier", "Hopper / Blackwell"],
     ["all", `All ${gpuCount} GPU models`],
     ["modern", "Modern · H100, H200, A100, L40S, RTX 4090"],
     ["last-released", "Latest · B200, B300, MI300X, RTX 5090"],
@@ -258,9 +269,9 @@ function populateControls() {
     ["other", "Other collected GPUs"]
   ];
   const gpu = $("#gpuFilter");
-  const current = gpu.value || "all";
+  const current = gpu.value || DEFAULT_GPU_COHORT;
   gpu.innerHTML = cohorts.map(([value, label]) => `<option value="${value}">${label}</option>`).join("");
-  gpu.value = current;
+  gpu.value = [...gpu.options].some((option) => option.value === current) ? current : DEFAULT_GPU_COHORT;
 
   const provider = $("#providerFilter");
   const providerCurrent = provider.value || "all";
@@ -296,23 +307,28 @@ function populateControls() {
 function filteredObservations() {
   const dataset = $("#datasetFilter").value;
   const cohort = $("#gpuFilter").value;
-  const cutoff = state.months
-    ? new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - state.months, 1))
-    : new Date(0);
+  const cutoff = observationCutoff();
   const observations = dataset === "direct" ? directIndexObservations() : state.observations;
   $("#providerFilter").disabled = dataset !== "direct";
   $("#regionFilter").disabled = dataset !== "direct";
   $("#commitmentFilter").disabled = dataset !== "direct";
   return observations.filter((row) =>
-    (cohort === "all" || row.group === cohort) &&
+    matchesGpuCohort(row.gpuModel, cohort) &&
     new Date(row.observedAt) >= cutoff
   );
 }
 
-function filteredDirectRates() {
+function observationCutoff() {
+  return state.months
+    ? new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - state.months, 1))
+    : new Date(0);
+}
+
+function filteredDirectRates({ defaultCommitment = null } = {}) {
   const provider = $("#providerFilter").value;
   const region = $("#regionFilter").value;
-  const commitment = $("#commitmentFilter").value;
+  const selectedCommitment = $("#commitmentFilter").value;
+  const commitment = selectedCommitment === "all" && defaultCommitment ? defaultCommitment : selectedCommitment;
   return state.rates.filter((row) =>
     (provider === "all" || row.provider === provider) &&
     (region === "all" || row.region === region) &&
@@ -322,7 +338,7 @@ function filteredDirectRates() {
 
 function matchesSelectedCohort(row) {
   const cohort = $("#gpuFilter").value;
-  return cohort === "all" || groupForGpu(row.gpuModel) === cohort;
+  return matchesGpuCohort(row.gpuModel, cohort);
 }
 
 function directPanelRates({ ignoreCommitment = false } = {}) {
@@ -411,9 +427,9 @@ function regionGroup(region = "") {
   return "Global / Other";
 }
 
-function directIndexObservations() {
+function directIndexObservations(rows = filteredDirectRates({ defaultCommitment: "on-demand" })) {
   const groups = new Map();
-  for (const row of filteredDirectRates()) {
+  for (const row of rows) {
     const price = priceValue(row);
     if (!Number.isFinite(price)) continue;
     const month = monthKey(row.observedAt);
@@ -464,6 +480,48 @@ function directIndexObservations() {
   );
 }
 
+function directDailyIndexObservations(rows) {
+  const groups = new Map();
+  for (const row of rows) {
+    const price = priceValue(row);
+    if (!Number.isFinite(price)) continue;
+    const day = dayKey(row.observedAt);
+    const key = `${day}|${row.gpuModel}`;
+    const group = groups.get(key) || {
+      day,
+      gpuModel: row.gpuModel,
+      providerPrices: new Map(),
+      rows: 0
+    };
+    const providerRows = group.providerPrices.get(row.provider) || [];
+    providerRows.push(price);
+    group.providerPrices.set(row.provider, providerRows);
+    group.rows += 1;
+    groups.set(key, group);
+  }
+
+  return [...groups.values()].flatMap((group) => {
+    const providerMedians = [...group.providerPrices.values()].map(median).filter((value) => value != null);
+    const price = median(providerMedians);
+    if (price == null) return [];
+    return [{
+      observedAt: `${group.day}T00:00:00.000Z`,
+      gpuModel: group.gpuModel,
+      group: groupForGpu(group.gpuModel),
+      pricePerGpuHour: price,
+      currency: "USD",
+      aggregation: "daily-median-of-provider-medians",
+      billingType: "spot",
+      directObservationCount: group.rows,
+      providerCount: group.providerPrices.size,
+      commitment: "spot"
+    }];
+  }).toSorted((a, b) =>
+    new Date(a.observedAt) - new Date(b.observedAt) ||
+    a.gpuModel.localeCompare(b.gpuModel)
+  );
+}
+
 function latestByModel(rows) {
   const latest = new Map();
   for (const row of rows) {
@@ -475,6 +533,10 @@ function latestByModel(rows) {
 
 function monthKey(date) {
   return new Date(date).toISOString().slice(0, 7);
+}
+
+function dayKey(date) {
+  return new Date(date).toISOString().slice(0, 10);
 }
 
 function monthBounds(date) {
@@ -610,7 +672,10 @@ function buildVisualData() {
   const comparableHistory = comparableRates(directPanelRates());
   const currentRows = [...latestRateMap(comparableHistory).values()];
   const allCommitments = directPanelRates({ ignoreCommitment: true });
-  return { comparableHistory, currentRows, allCommitments };
+  const spotHistory = allCommitments.filter((row) => row.commitment === "spot");
+  const spotChartRows = directDailyIndexObservations(spotHistory)
+    .filter((row) => new Date(row.observedAt) >= observationCutoff());
+  return { comparableHistory, currentRows, allCommitments, spotChartRows };
 }
 
 function movementRows(currentRows, allRates) {
@@ -893,9 +958,10 @@ function renderCommitmentDiscounts(rows) {
 }
 
 function renderVisualizations() {
-  const { comparableHistory, currentRows, allCommitments } = buildVisualData();
+  const { comparableHistory, currentRows, allCommitments, spotChartRows } = buildVisualData();
   renderHeroMetrics();
   renderMovementMatrix(movementRows(currentRows, comparableHistory));
+  renderSpotChart(spotChartRows);
   renderRegionHeatmap(regionalHeatmapRows(currentRows));
   renderTopMovers(topMoverRows(currentRows, comparableHistory));
   renderCheapestRegions(cheapestRegionRows(currentRows));
@@ -905,7 +971,7 @@ function renderVisualizations() {
 
 function isDefaultDashboardView() {
   return $("#datasetFilter").value === "direct" &&
-    $("#gpuFilter").value === "all" &&
+    $("#gpuFilter").value === DEFAULT_GPU_COHORT &&
     $("#providerFilter").value === "all" &&
     $("#regionFilter").value === "all" &&
     $("#commitmentFilter").value === "all" &&
@@ -915,6 +981,7 @@ function isDefaultDashboardView() {
 function renderDashboardSummary(summary) {
   renderHeroMetricsSummary(summary.hero);
   renderMovementMatrix(summary.movementRows);
+  renderSpotChart(summary.spotChartRows);
   renderRegionHeatmap(summary.heatmapRows);
   renderTopMovers(summary.topMoverRows);
   renderCheapestRegions(summary.cheapestRows);
@@ -928,6 +995,8 @@ function renderVisualizationLoadingPanels() {
   renderHeroMetricsSummary(state.dashboard?.hero);
   const loading = `<div class="empty compact-empty">Loading filtered data...</div>`;
   $("#movementTable").innerHTML = loading;
+  $("#spotChart").innerHTML = loading;
+  $("#spotLegend").innerHTML = "";
   $("#regionHeatmap").innerHTML = loading;
   $("#topMovers").innerHTML = loading;
   $("#cheapestRegions").innerHTML = loading;
@@ -980,11 +1049,17 @@ function render() {
 }
 
 function renderChart(rows) {
-  const chart = $("#chart");
-  const legend = $("#legend");
+  renderLineChart(rows, $("#chart"), $("#legend"), "No observations match this cohort and date range.");
+}
+
+function renderSpotChart(rows = []) {
+  renderLineChart(rows, $("#spotChart"), $("#spotLegend"), "No spot rates match this cohort and date range.");
+}
+
+function renderLineChart(rows, chart, legend, emptyMessage) {
   const validRows = rows.filter((row) => Number.isFinite(priceValue(row)));
   if (!validRows.length) {
-    chart.innerHTML = `<div class="empty">No observations match this cohort and date range.</div>`;
+    chart.innerHTML = `<div class="empty">${escapeHtml(emptyMessage)}</div>`;
     legend.innerHTML = "";
     return;
   }
@@ -1031,18 +1106,18 @@ function renderChart(rows) {
   legend.innerHTML = models.map((model, index) =>
     `<span class="legend-item"><i class="legend-dot" style="background:${state.colors[index % state.colors.length]}"></i>${model}</span>`
   ).join("");
-  attachTooltips();
+  attachTooltips(chart);
 }
 
-function attachTooltips() {
-  document.querySelectorAll(".point").forEach((point) => {
+function attachTooltips(root = document) {
+  root.querySelectorAll(".point").forEach((point) => {
     point.addEventListener("mouseenter", (event) => {
       const row = JSON.parse(event.target.dataset.rate);
       const tooltip = document.createElement("div");
       tooltip.className = "tooltip";
       tooltip.innerHTML = `<strong>${row.gpuModel}</strong>
         ${priceText(row.pricePerGpuHour)} / GPU-hour<br>
-        ${shortDate(row.observedAt)}<br>
+        ${fullDate(row.observedAt)}<br>
         <span style="color:#aeb6af">${escapeHtml(aggregationText(row.aggregation))}</span>`;
       document.body.appendChild(tooltip);
       point.tooltip = tooltip;
