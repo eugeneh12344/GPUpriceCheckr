@@ -5,8 +5,10 @@ A local-first web app that collects, normalizes, stores, and charts GPU rental p
 ## What it does
 
 - Scrapes public pricing pages for Lambda, Runpod, and CoreWeave.
+- Pulls dynamic market data from Ornn, Vast.ai, and RunPod marketplace feeds.
+- Supports an optional TensorDock marketplace JSON feed via `TENSORDOCK_MARKETPLACE_URL`.
 - Queries Microsoft's official Azure Retail Prices API.
-- Queries the AWS Price List Query API for EC2 GPU VM pricing.
+- Queries the AWS Price List Query API for EC2 GPU VM pricing plus EC2 Spot Price History.
 - Queries the Google Cloud Billing Catalog API for Compute Engine GPU pricing.
 - Stores immutable, source-linked observations in SQLite.
 - Normalizes multi-GPU instance prices to USD per physical GPU-hour.
@@ -50,6 +52,16 @@ After creating the Blueprint in Render, set these secret values:
 If Render assigns a different public URL than `https://gpupricecheckr.onrender.com`, update the cron job's `APP_BASE_URL` environment variable to the actual web service URL.
 
 Azure pricing does not require a secret key. AWS credentials only need permission to call the Pricing API actions `pricing:GetProducts` and `pricing:GetAttributeValues`; do not use an admin key. Google Cloud requires a service account JSON key because the Cloud Billing Catalog API uses OAuth scopes rather than simple API-key auth for `services.skus.list`.
+
+For AWS spot movement, the same AWS credentials should also allow `ec2:DescribeSpotPriceHistory`. The collector defaults to a compact set of major GPU regions and recent spot history; tune it with:
+
+- `AWS_SPOT_REGIONS=us-east-1,us-west-2`
+- `AWS_SPOT_INSTANCE_TYPES=p5.48xlarge,p5e.48xlarge`
+- `AWS_SPOT_HISTORY_DAYS=14`
+
+The Ornn market index collector defaults to H100 SXM, H200, B200, A100 SXM4, and RTX 5090. Override with comma-separated Ornn GPU names using `ORNN_GPU_TYPES`.
+
+TensorDock is listed as an optional connector. It is skipped during default collection until `TENSORDOCK_MARKETPLACE_URL` points to a JSON feed with GPU labels and hourly prices.
 
 By default, the hyperscaler collectors pull every available region returned by each pricing API. To limit collection during testing or reduce API volume, set comma-separated region allowlists:
 
@@ -101,4 +113,4 @@ Add an entry and parser in `src/providers.mjs`. A parser receives HTML plus an o
 Good next adapters:
 
 - Oracle Cloud GPU pricing.
-- Vast.ai marketplace API (for a market-floor or median series rather than a list price).
+- Additional exchange-style marketplaces with public price/availability APIs.

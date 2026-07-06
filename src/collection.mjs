@@ -1,5 +1,5 @@
 import { finishRun, saveRates, startRun } from "./db.mjs";
-import { providerCatalog, scrapeProvider } from "./providers.mjs";
+import { defaultProviderIds, scrapeProvider } from "./providers.mjs";
 
 function validRateRows(rates) {
   return rates.filter((rate) => {
@@ -8,7 +8,7 @@ function validRateRows(rates) {
   });
 }
 
-export async function collectProviders(providerIds = providerCatalog().map((provider) => provider.id)) {
+export async function collectProviders(providerIds = defaultProviderIds()) {
   const results = [];
   for (const id of providerIds) {
     const runId = startRun(id);

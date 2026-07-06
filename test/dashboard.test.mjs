@@ -27,7 +27,9 @@ test("dashboard summary keeps first-load chart payload slim", () => {
     rate({ provider: "Azure", gpuModel: "B200", region: "eastus", pricePerGpuHour: 8 }),
     rate({ provider: "AWS", gpuModel: "A100", region: "us-east-1", pricePerGpuHour: 2 }),
     rate({ provider: "Google Cloud", observedAt: "2026-06-27T12:00:00.000Z", commitment: "spot", pricePerGpuHour: 3.5 }),
-    rate({ provider: "Google Cloud", commitment: "spot", pricePerGpuHour: 3 })
+    rate({ provider: "Google Cloud", commitment: "spot", pricePerGpuHour: 3 }),
+    rate({ provider: "Ornn Market Index", providerType: "neocloud", observedAt: "2026-06-27T20:00:00.000Z", commitment: "market-index", sourceKind: "market-index", pricePerGpuHour: 2.5 }),
+    rate({ provider: "Ornn Market Index", providerType: "neocloud", commitment: "market-index", sourceKind: "market-index", pricePerGpuHour: 2.7 })
   ];
   const meta = {
     range: { count: rates.length - 1 },
@@ -62,6 +64,13 @@ test("dashboard summary keeps first-load chart payload slim", () => {
     [
       ["2026-06-27T00:00:00.000Z", "H100", 3.5],
       ["2026-06-28T00:00:00.000Z", "H100", 3]
+    ]
+  );
+  assert.deepEqual(
+    summary.marketIndexRows.map((row) => [row.observedAt, row.gpuModel, row.pricePerGpuHour]),
+    [
+      ["2026-06-27T00:00:00.000Z", "H100", 2.5],
+      ["2026-06-28T00:00:00.000Z", "H100", 2.7]
     ]
   );
 

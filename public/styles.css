@@ -277,6 +277,7 @@ select:disabled {
 .trend-panel { grid-column: span 7; }
 .movement-panel { grid-column: span 5; }
 .spot-panel { grid-column: span 12; }
+.market-panel { grid-column: span 12; }
 .heatmap-panel { grid-column: span 8; }
 .movers-panel { grid-column: span 4; }
 .cheapest-panel { grid-column: span 5; }
@@ -310,7 +311,9 @@ select:disabled {
 }
 
 .spot-chart,
-.spot-chart svg {
+.spot-chart svg,
+.market-chart,
+.market-chart svg {
   min-height: 320px;
   height: 320px;
 }
@@ -893,6 +896,7 @@ td a {
   .trend-panel,
   .movement-panel,
   .spot-panel,
+  .market-panel,
   .heatmap-panel,
   .movers-panel,
   .cheapest-panel,
@@ -916,6 +920,7 @@ td a {
   .trend-panel,
   .movement-panel,
   .spot-panel,
+  .market-panel,
   .heatmap-panel,
   .movers-panel,
   .cheapest-panel,

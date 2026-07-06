@@ -1,7 +1,7 @@
 import { collectProviders, summarizeCollection } from "./collection.mjs";
 import { listRates } from "./db.mjs";
 import { sendEmail } from "./email.mjs";
-import { providerCatalog } from "./providers.mjs";
+import { defaultProviderIds } from "./providers.mjs";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const ANALYSIS_COMMITMENT = "on-demand";
@@ -473,7 +473,7 @@ function renderText({ digest, failures, generatedAt, collected }) {
 export async function runDailyReport(options = {}) {
   const providerIds = options.providers?.length
     ? options.providers
-    : providerCatalog().map((provider) => provider.id);
+    : defaultProviderIds();
   const before = listRates();
   const results = await collectProviders(providerIds);
   const scrapedRates = results.flatMap((result) => result.rates);

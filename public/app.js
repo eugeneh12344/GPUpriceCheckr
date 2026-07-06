@@ -216,6 +216,8 @@ function showLoadError(error) {
   $("#regionHeatmap").innerHTML = `<div class="empty compact-empty">No data loaded.</div>`;
   $("#spotChart").innerHTML = `<div class="empty compact-empty">No data loaded.</div>`;
   $("#spotLegend").innerHTML = "";
+  $("#marketChart").innerHTML = `<div class="empty compact-empty">No data loaded.</div>`;
+  $("#marketLegend").innerHTML = "";
   $("#topMovers").innerHTML = `<div class="empty compact-empty">No data loaded.</div>`;
   $("#cheapestRegions").innerHTML = `<div class="empty compact-empty">No data loaded.</div>`;
   $("#providerSpread").innerHTML = `<div class="empty compact-empty">No data loaded.</div>`;
@@ -480,7 +482,7 @@ function directIndexObservations(rows = filteredDirectRates({ defaultCommitment:
   );
 }
 
-function directDailyIndexObservations(rows) {
+function directDailyIndexObservations(rows, commitment = "spot", aggregation = "daily-median-of-provider-medians") {
   const groups = new Map();
   for (const row of rows) {
     const price = priceValue(row);
@@ -510,11 +512,11 @@ function directDailyIndexObservations(rows) {
       group: groupForGpu(group.gpuModel),
       pricePerGpuHour: price,
       currency: "USD",
-      aggregation: "daily-median-of-provider-medians",
-      billingType: "spot",
+      aggregation,
+      billingType: commitment,
       directObservationCount: group.rows,
       providerCount: group.providerPrices.size,
-      commitment: "spot"
+      commitment
     }];
   }).toSorted((a, b) =>
     new Date(a.observedAt) - new Date(b.observedAt) ||
@@ -675,7 +677,13 @@ function buildVisualData() {
   const spotHistory = allCommitments.filter((row) => row.commitment === "spot");
   const spotChartRows = directDailyIndexObservations(spotHistory)
     .filter((row) => new Date(row.observedAt) >= observationCutoff());
-  return { comparableHistory, currentRows, allCommitments, spotChartRows };
+  const marketIndexHistory = allCommitments.filter((row) => row.commitment === "market-index");
+  const marketIndexRows = directDailyIndexObservations(
+    marketIndexHistory,
+    "market-index",
+    "external-daily-market-index"
+  ).filter((row) => new Date(row.observedAt) >= observationCutoff());
+  return { comparableHistory, currentRows, allCommitments, spotChartRows, marketIndexRows };
 }
 
 function movementRows(currentRows, allRates) {
@@ -957,16 +965,21 @@ function renderCommitmentDiscounts(rows) {
   }).join("") : `<div class="empty compact-empty">No committed-rate pairs match these filters.</div>`;
 }
 
+function discountCandidateRows(rows) {
+  return rows.filter((row) => row.commitment !== "market-index" && row.sourceKind !== "market-index");
+}
+
 function renderVisualizations() {
-  const { comparableHistory, currentRows, allCommitments, spotChartRows } = buildVisualData();
+  const { comparableHistory, currentRows, allCommitments, spotChartRows, marketIndexRows } = buildVisualData();
   renderHeroMetrics();
   renderMovementMatrix(movementRows(currentRows, comparableHistory));
   renderSpotChart(spotChartRows);
+  renderMarketIndexChart(marketIndexRows);
   renderRegionHeatmap(regionalHeatmapRows(currentRows));
   renderTopMovers(topMoverRows(currentRows, comparableHistory));
   renderCheapestRegions(cheapestRegionRows(currentRows));
   renderProviderSpread(providerSpreadRows(currentRows));
-  renderCommitmentDiscounts(commitmentDiscountRows(allCommitments));
+  renderCommitmentDiscounts(commitmentDiscountRows(discountCandidateRows(allCommitments)));
 }
 
 function isDefaultDashboardView() {
@@ -982,6 +995,7 @@ function renderDashboardSummary(summary) {
   renderHeroMetricsSummary(summary.hero);
   renderMovementMatrix(summary.movementRows);
   renderSpotChart(summary.spotChartRows);
+  renderMarketIndexChart(summary.marketIndexRows);
   renderRegionHeatmap(summary.heatmapRows);
   renderTopMovers(summary.topMoverRows);
   renderCheapestRegions(summary.cheapestRows);
@@ -997,6 +1011,8 @@ function renderVisualizationLoadingPanels() {
   $("#movementTable").innerHTML = loading;
   $("#spotChart").innerHTML = loading;
   $("#spotLegend").innerHTML = "";
+  $("#marketChart").innerHTML = loading;
+  $("#marketLegend").innerHTML = "";
   $("#regionHeatmap").innerHTML = loading;
   $("#topMovers").innerHTML = loading;
   $("#cheapestRegions").innerHTML = loading;
@@ -1053,7 +1069,11 @@ function renderChart(rows) {
 }
 
 function renderSpotChart(rows = []) {
-  renderLineChart(rows, $("#spotChart"), $("#spotLegend"), "No spot rates match this cohort and date range.");
+  renderLineChart(rows, $("#spotChart"), $("#spotLegend"), "No cloud or marketplace spot rates match this cohort and date range.");
+}
+
+function renderMarketIndexChart(rows = []) {
+  renderLineChart(rows, $("#marketChart"), $("#marketLegend"), "No external market-index rates match this cohort and date range.");
 }
 
 function renderLineChart(rows, chart, legend, emptyMessage) {
@@ -1147,10 +1167,17 @@ function renderSources() {
   const collectorCards = state.meta.catalog.map((source) => {
     const tracked = observations.get(source.name);
     const lastRun = state.meta.runs.find((run) => run.provider === source.id);
-    const status = lastRun?.status || (tracked ? "tracked" : "ready");
+    const status = lastRun?.status || (tracked ? "tracked" : source.defaultEnabled === false ? "optional" : "ready");
+    const sourceKind = source.archiveCapable
+      ? "Live + archive parser"
+      : source.defaultEnabled === false
+        ? "Optional connector"
+        : source.type === "neocloud"
+          ? "Public market API"
+          : "Official price API";
     return `<div class="source-card">
       <div class="source-top"><span class="source-name">${source.name}</span><span class="badge">${source.type}</span></div>
-      <div class="source-meta">${tracked?.observations || 0} direct observations · ${status}<br>${source.archiveCapable ? "Live + archive parser" : "Official price API"}</div>
+      <div class="source-meta">${tracked?.observations || 0} direct observations · ${status}<br>${sourceKind}</div>
     </div>`;
   }).join("");
   $("#sources").innerHTML = indexCard + collectorCards;

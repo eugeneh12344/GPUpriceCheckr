@@ -204,7 +204,7 @@ function movementRows(currentRows, allRates, generatedAt) {
   );
 }
 
-function directDailyIndexObservations(rates) {
+function directDailyIndexObservations(rates, commitment = "spot", aggregation = "daily-median-of-provider-medians") {
   const groups = new Map();
   for (const row of rates) {
     if (!Number.isFinite(priceValue(row))) continue;
@@ -230,11 +230,11 @@ function directDailyIndexObservations(rates) {
       group: groupForGpu(group.gpuModel),
       pricePerGpuHour: price,
       currency: "USD",
-      aggregation: "daily-median-of-provider-medians",
-      billingType: "spot",
+      aggregation,
+      billingType: commitment,
       directObservationCount: [...group.providerPrices.values()].reduce((sum, rows) => sum + rows.length, 0),
       providerCount: group.providerPrices.size,
-      commitment: "spot"
+      commitment
     }];
   }).toSorted((a, b) =>
     new Date(a.observedAt) - new Date(b.observedAt) ||
@@ -359,6 +359,10 @@ function latestPriceTimestamp(rates) {
   return rows.toSorted((a, b) => observedTime(b) - observedTime(a))[0]?.observedAt || null;
 }
 
+function isDiscountCandidate(row) {
+  return row.commitment !== "market-index" && row.sourceKind !== "market-index";
+}
+
 export function buildDashboardSummary({ meta, rates, chartRates = rates, panelRates = rates, generatedAt = new Date() }) {
   const onDemandRows = panelRates.filter((row) => row.commitment === "on-demand");
   const currentRows = [...latestRateMap(onDemandRows).values()].filter((row) => isDefaultGpu(row.gpuModel));
@@ -369,6 +373,11 @@ export function buildDashboardSummary({ meta, rates, chartRates = rates, panelRa
     .filter((row) => isDefaultGpu(row.gpuModel) && new Date(row.observedAt) >= chartCutoff);
   const fullSpotChartRows = directDailyIndexObservations(chartRates.filter((row) => row.commitment === "spot"))
     .filter((row) => isDefaultGpu(row.gpuModel) && new Date(row.observedAt) >= chartCutoff);
+  const fullMarketIndexRows = directDailyIndexObservations(
+    chartRates.filter((row) => row.commitment === "market-index"),
+    "market-index",
+    "external-daily-market-index"
+  ).filter((row) => isDefaultGpu(row.gpuModel) && new Date(row.observedAt) >= chartCutoff);
   const chartRows = fullChartRows.map((row) => ({
     observedAt: row.observedAt,
     gpuModel: row.gpuModel,
@@ -376,6 +385,12 @@ export function buildDashboardSummary({ meta, rates, chartRates = rates, panelRa
     pricePerGpuHour: row.pricePerGpuHour
   }));
   const spotChartRows = fullSpotChartRows.map((row) => ({
+    observedAt: row.observedAt,
+    gpuModel: row.gpuModel,
+    group: row.group,
+    pricePerGpuHour: row.pricePerGpuHour
+  }));
+  const marketIndexRows = fullMarketIndexRows.map((row) => ({
     observedAt: row.observedAt,
     gpuModel: row.gpuModel,
     group: row.group,
@@ -395,11 +410,12 @@ export function buildDashboardSummary({ meta, rates, chartRates = rates, panelRa
     tableRows: latestByModel(fullChartRows).toSorted((a, b) => priceValue(b) - priceValue(a)),
     movementRows: movementRows(currentRows, onDemandRows, generatedAt),
     spotChartRows,
+    marketIndexRows,
     spotMovementRows: movementRows(currentSpotRows, spotRows, generatedAt),
     heatmapRows: regionalHeatmapRows(currentRows),
     topMoverRows: topMoverRows(currentRows, onDemandRows),
     cheapestRows: cheapestRegionRows(currentRows),
     providerSpreadRows: providerSpreadRows(currentRows),
-    commitmentRows: commitmentDiscountRows(defaultPanelRates)
+    commitmentRows: commitmentDiscountRows(defaultPanelRates.filter(isDiscountCandidate))
   };
 }

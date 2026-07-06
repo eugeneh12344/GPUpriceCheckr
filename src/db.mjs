@@ -264,7 +264,8 @@ export function dashboardSummaryData(generatedAt = new Date()) {
   return {
     chartRates: [
       ...dashboardChartAggregateRows(generatedAt, "on-demand"),
-      ...dashboardChartAggregateRows(generatedAt, "spot", "day")
+      ...dashboardChartAggregateRows(generatedAt, "spot", "day"),
+      ...dashboardChartAggregateRows(generatedAt, "market-index", "day")
     ],
     panelRates: dashboardSummaryPanelRows(generatedAt)
   };

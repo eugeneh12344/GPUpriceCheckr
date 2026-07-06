@@ -18,7 +18,7 @@ import {
 } from "./src/db.mjs";
 import { collectProviders, summarizeCollection } from "./src/collection.mjs";
 import { buildDashboardSummary } from "./src/dashboard.mjs";
-import { importArchive, providerCatalog } from "./src/providers.mjs";
+import { defaultProviderIds, importArchive, providerCatalog } from "./src/providers.mjs";
 import { modelIndex, modelIndexMetadata } from "./src/model-index.mjs";
 import { runDailyReport } from "./src/report.mjs";
 
@@ -27,7 +27,7 @@ const PUBLIC = join(ROOT, "public");
 const PORT = Number(process.env.PORT || 3000);
 const DASHBOARD_CACHE_MS = 5 * 60 * 1000;
 const DASHBOARD_CACHE_FILE = join(DATA_DIR, "dashboard-payload-cache.json");
-const DASHBOARD_CACHE_VERSION = 5;
+const DASHBOARD_CACHE_VERSION = 6;
 const BROTLI_OPTIONS = { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 4 } };
 const GZIP_OPTIONS = { level: 6 };
 let dashboardCache = null;
@@ -207,7 +207,7 @@ async function api(req, res, url) {
   if (req.method === "POST" && url.pathname === "/api/scrape") {
     if (requireAuth(req, res)) return;
     const input = await body(req);
-    const ids = input.providers?.length ? input.providers : providerCatalog().map((p) => p.id);
+    const ids = input.providers?.length ? input.providers : defaultProviderIds();
     const results = await collectProviders(ids);
     clearDashboardCache();
     await refreshDashboardCache();

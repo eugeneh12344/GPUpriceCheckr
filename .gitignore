@@ -1,6 +1,7 @@
 data/*.sqlite
 data/*.sqlite-shm
 data/*.sqlite-wal
+data/dashboard-payload-cache.json
 .DS_Store
 .env
 .env.*

@@ -9,7 +9,12 @@ test("provider catalog includes both market classes", () => {
   assert.ok(catalog.some((provider) => provider.type === "neocloud"));
   assert.ok(catalog.some((provider) => provider.id === "aws"));
   assert.ok(catalog.some((provider) => provider.id === "googleCloud"));
+  assert.ok(catalog.some((provider) => provider.id === "ornn"));
+  assert.ok(catalog.some((provider) => provider.id === "vast"));
+  assert.ok(catalog.some((provider) => provider.id === "runpodMarket"));
+  assert.ok(catalog.some((provider) => provider.id === "tensorDock" && provider.optional));
   assert.ok(catalog.filter((provider) => provider.archiveCapable).length >= 3);
+  assert.equal(__test.defaultProviderIds().includes("tensorDock"), false);
 });
 
 test("Azure rows normalize VM prices to per-GPU hourly rates", () => {
@@ -68,6 +73,27 @@ test("AWS products emit on-demand and reserved per-GPU rates", () => {
   assert.equal(rates.find((rate) => rate.commitment === "reserved-1-year-no-upfront").pricePerGpuHour, 8);
 });
 
+test("AWS spot history rows normalize instance spot prices to per-GPU hourly rates", () => {
+  const rates = __test.ratesFromAwsSpotHistoryXml(`
+    <DescribeSpotPriceHistoryResponse>
+      <spotPriceHistorySet>
+        <item>
+          <instanceType>p5.48xlarge</instanceType>
+          <productDescription>Linux/UNIX</productDescription>
+          <spotPrice>32.00</spotPrice>
+          <timestamp>2026-07-05T20:00:00.000Z</timestamp>
+          <availabilityZone>us-east-1a</availabilityZone>
+        </item>
+      </spotPriceHistorySet>
+    </DescribeSpotPriceHistoryResponse>
+  `, "us-east-1");
+
+  assert.equal(rates.length, 1);
+  assert.equal(rates[0].gpuModel, "H100");
+  assert.equal(rates[0].commitment, "spot");
+  assert.equal(rates[0].pricePerGpuHour, 4);
+});
+
 test("Google Cloud SKUs map hourly accelerator prices across service regions", () => {
   const rates = __test.ratesFromGoogleSku({
     skuId: "abc123",
@@ -88,6 +114,59 @@ test("Google Cloud SKUs map hourly accelerator prices across service regions", (
   assert.equal(rates[0].gpuModel, "H100");
   assert.equal(rates[0].commitment, "committed-1-year");
   assert.equal(rates[0].pricePerGpuHour, 4.5);
+
+  const baseSecondRates = __test.ratesFromGoogleSku({
+    skuId: "def456",
+    description: "Nvidia Tesla H100 GPU Spot running in Americas",
+    serviceRegions: ["us-central1"],
+    category: { usageType: "Spot" },
+    pricingInfo: [{
+      pricingExpression: {
+        usageUnit: "h",
+        baseUnit: "s",
+        baseUnitConversionFactor: 3600,
+        tieredRates: [{ unitPrice: { units: "2", nanos: 500000000 } }]
+      }
+    }]
+  }, "2026-06-27T00:00:00.000Z", "https://cloudbilling.googleapis.com/v1/services/6F81-5844-456A/skus?currencyCode=USD");
+
+  assert.equal(baseSecondRates[0].commitment, "spot");
+  assert.equal(baseSecondRates[0].pricePerGpuHour, 2.5);
+});
+
+test("marketplace provider rows normalize dynamic asks", () => {
+  const vast = __test.ratesFromVastOffer({
+    id: 123,
+    gpu_name: "NVIDIA H100 SXM",
+    num_gpus: 8,
+    dph_total: 24,
+    geolocation: "Texas, US"
+  }, "2026-07-05T20:00:00.000Z");
+  assert.equal(vast[0].provider, "Vast.ai Marketplace");
+  assert.equal(vast[0].gpuModel, "H100");
+  assert.equal(vast[0].commitment, "spot");
+  assert.equal(vast[0].pricePerGpuHour, 3);
+
+  const runpod = __test.ratesFromRunpodGpu({
+    id: "NVIDIA H200 SXM",
+    displayName: "H200 SXM",
+    secureCloud: true,
+    communityCloud: true,
+    lowestPrice: { minimumBidPrice: 2.25, uninterruptablePrice: 2.8 }
+  }, "2026-07-05T20:00:00.000Z");
+  assert.equal(runpod.length, 2);
+  assert.equal(runpod.find((rate) => rate.commitment === "spot").pricePerGpuHour, 2.25);
+  assert.equal(runpod.find((rate) => rate.commitment === "on-demand").pricePerGpuHour, 2.8);
+
+  const tensorDock = __test.ratesFromTensorDockRow({
+    gpuName: "B200",
+    gpuCount: 2,
+    pricePerGpuHour: 12,
+    region: "us-east"
+  }, "2026-07-05T20:00:00.000Z");
+  assert.equal(tensorDock[0].provider, "TensorDock Marketplace");
+  assert.equal(tensorDock[0].gpuModel, "B200");
+  assert.equal(tensorDock[0].pricePerGpuHour, 12);
 });
 
 test("AIMultiple model index contains the extracted 24-month series", () => {
