@@ -188,19 +188,23 @@ function directIndexObservations(rates) {
   );
 }
 
-function movementRows(currentRows, allRates, generatedAt) {
+function movementRows(currentRows, allRates, generatedAt, indexRows = []) {
   const generatedTime = generatedAt.getTime();
-  return [...groupBy(currentRows, (row) => row.gpuModel).entries()].map(([gpuModel, rows]) => ({
-    gpuModel,
-    averagePrice: providerBalancedPrice(rows),
-    observations: rows.length,
-    providerCount: new Set(rows.map((row) => row.provider)).size,
-    regionCount: new Set(rows.map((row) => row.region)).size,
-    comparisons: Object.fromEntries(LOOKBACKS.map((lookback) => [
-      lookback.key,
-      matchedComparison(rows, allRates, generatedTime - lookback.days * DAY_MS)
-    ]))
-  })).toSorted((a, b) =>
+  const currentIndexByModel = new Map(latestByModel(indexRows).map((row) => [row.gpuModel, row]));
+  return [...groupBy(currentRows, (row) => row.gpuModel).entries()].map(([gpuModel, rows]) => {
+    const indexRow = currentIndexByModel.get(gpuModel);
+    return {
+      gpuModel,
+      averagePrice: Number.isFinite(priceValue(indexRow)) ? priceValue(indexRow) : providerBalancedPrice(rows),
+      observations: Number(indexRow?.directObservationCount || rows.length),
+      providerCount: Number(indexRow?.providerCount || new Set(rows.map((row) => row.provider)).size),
+      regionCount: Number(indexRow?.regionCount || new Set(rows.map((row) => row.region)).size),
+      comparisons: Object.fromEntries(LOOKBACKS.map((lookback) => [
+        lookback.key,
+        matchedComparison(rows, allRates, generatedTime - lookback.days * DAY_MS)
+      ]))
+    };
+  }).toSorted((a, b) =>
     priorityIndex(a.gpuModel) - priorityIndex(b.gpuModel) ||
     b.observations - a.observations ||
     a.gpuModel.localeCompare(b.gpuModel)
@@ -431,10 +435,10 @@ export function buildDashboardSummary({ meta, rates, chartRates = rates, panelRa
     },
     chartRows,
     tableRows: latestByModel(fullChartRows).toSorted((a, b) => priceValue(b) - priceValue(a)),
-    movementRows: movementRows(currentRows, onDemandRows, generatedAt),
+    movementRows: movementRows(currentRows, onDemandRows, generatedAt, fullChartRows),
     spotChartRows,
     marketIndexRows,
-    spotMovementRows: movementRows(currentSpotRows, spotRows, generatedAt),
+    spotMovementRows: movementRows(currentSpotRows, spotRows, generatedAt, fullSpotChartRows),
     heatmapRows: regionalHeatmapRows(currentRows),
     topMoverRows: topMoverRows(currentRows, onDemandRows),
     cheapestRows: cheapestRegionRows(currentRows),

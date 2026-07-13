@@ -85,6 +85,7 @@ test("dashboard summary keeps first-load chart payload slim", () => {
 
 test("dashboard graphics balance providers before combining prices", () => {
   const rates = [
+    rate({ observedAt: "2026-06-20T12:00:00.000Z", provider: "AWS", region: "us-east-1", pricePerGpuHour: 2 }),
     rate({ provider: "AWS", region: "us-east-1", pricePerGpuHour: 4 }),
     rate({ provider: "AWS", region: "us-west-2", pricePerGpuHour: 100 }),
     rate({ provider: "Google Cloud", region: "europe-west1", pricePerGpuHour: 6 })
@@ -96,8 +97,10 @@ test("dashboard graphics balance providers before combining prices", () => {
   });
 
   const movement = summary.movementRows.find((row) => row.gpuModel === "H100");
-  assert.equal(movement.averagePrice, 29);
-  assert.notEqual(movement.averagePrice, (4 + 100 + 6) / 3);
+  const trendLatest = summary.tableRows.find((row) => row.gpuModel === "H100");
+  assert.equal(movement.averagePrice, 5);
+  assert.equal(movement.averagePrice, trendLatest.pricePerGpuHour);
+  assert.notEqual(movement.averagePrice, 29);
 
   const heatmap = summary.heatmapRows.find((row) => row.gpuModel === "H100");
   assert.equal(heatmap.cells["North America"].averagePrice, 52);

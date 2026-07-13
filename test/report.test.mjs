@@ -34,9 +34,10 @@ test("daily report digest summarizes movement and new rows", () => {
   const digest = __test.buildDigest({ scrapedRates, previousRates, changes, generatedAt });
 
   const h100 = digest.movementRows.find((row) => row.gpuModel === "H100");
-  assert.equal(h100.observations, 2);
+  assert.equal(h100.observations, 4);
   assert.equal(h100.providerCount, 2);
-  assert.equal(h100.averagePrice, 4.5);
+  assert.equal(h100.averagePrice, 4.8);
+  assert.equal(h100.averagePrice, digest.trend.series[0].values.at(-1));
   assert.equal(Math.round(h100.comparisons.day.change * 10) / 10, -12.5);
   assert.equal(Math.round(h100.comparisons.week.change * 10) / 10, -16);
   assert.equal(digest.movers.drops.length, 1);

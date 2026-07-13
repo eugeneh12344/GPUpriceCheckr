@@ -678,6 +678,8 @@ async function showSourceDetails(indexRow) {
 function buildVisualData() {
   const comparableHistory = comparableRates(directPanelRates());
   const currentRows = [...latestRateMap(comparableHistory).values()];
+  const indexRows = directIndexObservations(comparableHistory)
+    .filter((row) => new Date(row.observedAt) >= observationCutoff());
   const allCommitments = directPanelRates({ ignoreCommitment: true });
   const spotHistory = allCommitments.filter((row) => row.commitment === "spot");
   const spotChartRows = directDailyIndexObservations(spotHistory)
@@ -688,22 +690,24 @@ function buildVisualData() {
     "market-index",
     "external-daily-market-index"
   ).filter((row) => new Date(row.observedAt) >= observationCutoff());
-  return { comparableHistory, currentRows, allCommitments, spotChartRows, marketIndexRows };
+  return { comparableHistory, currentRows, indexRows, allCommitments, spotChartRows, marketIndexRows };
 }
 
-function movementRows(currentRows, allRates) {
+function movementRows(currentRows, allRates, indexRows = []) {
   const generatedTime = Math.max(Date.now(), ...currentRows.map(observedTime).filter(Number.isFinite));
+  const currentIndexByModel = new Map(latestByModel(indexRows).map((row) => [row.gpuModel, row]));
   return [...groupBy(currentRows, (row) => row.gpuModel).entries()].map(([gpuModel, rows]) => {
+    const indexRow = currentIndexByModel.get(gpuModel);
     const comparisons = Object.fromEntries(LOOKBACKS.map((lookback) => [
       lookback.key,
       matchedComparison(rows, allRates, generatedTime - lookback.days * DAY_MS)
     ]));
     return {
       gpuModel,
-      averagePrice: providerBalancedPrice(rows),
-      observations: rows.length,
-      providerCount: new Set(rows.map((row) => row.provider)).size,
-      regionCount: new Set(rows.map((row) => row.region)).size,
+      averagePrice: Number.isFinite(priceValue(indexRow)) ? priceValue(indexRow) : providerBalancedPrice(rows),
+      observations: Number(indexRow?.directObservationCount || rows.length),
+      providerCount: Number(indexRow?.providerCount || new Set(rows.map((row) => row.provider)).size),
+      regionCount: Number(indexRow?.regionCount || new Set(rows.map((row) => row.region)).size),
       comparisons
     };
   }).toSorted((a, b) =>
@@ -990,9 +994,9 @@ function discountCandidateRows(rows) {
 }
 
 function renderVisualizations() {
-  const { comparableHistory, currentRows, allCommitments, spotChartRows, marketIndexRows } = buildVisualData();
+  const { comparableHistory, currentRows, indexRows, allCommitments, spotChartRows, marketIndexRows } = buildVisualData();
   renderHeroMetrics();
-  renderMovementMatrix(movementRows(currentRows, comparableHistory));
+  renderMovementMatrix(movementRows(currentRows, comparableHistory, indexRows));
   renderSpotChart(spotChartRows);
   renderMarketIndexChart(marketIndexRows);
   renderRegionHeatmap(regionalHeatmapRows(currentRows));

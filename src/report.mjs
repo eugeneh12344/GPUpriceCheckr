@@ -131,19 +131,20 @@ function providerBalancedPrice(rows) {
   return median(providerMedians);
 }
 
-function gpuMovementRows(currentRows, previousRates, generatedAt) {
+function gpuMovementRows(currentRows, previousRates, generatedAt, indexRates = currentRows) {
   const generatedTime = new Date(generatedAt).getTime();
   return [...groupBy(currentRows, (rate) => rate.gpuModel).entries()].map(([gpuModel, rows]) => {
-    const providers = new Set(rows.map((rate) => rate.provider));
-    const regions = new Set(rows.map((rate) => rate.region));
+    const modelIndexRates = indexRates.filter((rate) => rate.gpuModel === gpuModel);
+    const providers = new Set(modelIndexRates.map((rate) => rate.provider));
+    const regions = new Set(modelIndexRates.map((rate) => rate.region));
     const comparisons = Object.fromEntries(LOOKBACKS.map((lookback) => {
       const comparison = matchedComparison(rows, previousRates, generatedTime - lookback.days * DAY_MS);
       return [lookback.key, comparison];
     }));
     return {
       gpuModel,
-      averagePrice: providerBalancedPrice(rows),
-      observations: rows.length,
+      averagePrice: providerBalancedPrice(modelIndexRates),
+      observations: modelIndexRates.length,
       providerCount: providers.size,
       regionCount: regions.size,
       comparisons
@@ -261,14 +262,19 @@ function trendSeries(allRates, gpuModels, generatedAt) {
 
 function buildDigest({ scrapedRates, previousRates, changes, generatedAt }) {
   const currentRows = [...latestRateMap(scrapedRates.filter(isAnalysisRate)).values()];
-  const movementRows = gpuMovementRows(currentRows, previousRates, generatedAt);
+  const allRates = [...previousRates, ...scrapedRates];
+  const currentMonth = new Date(generatedAt).toISOString().slice(0, 7);
+  const currentMonthRates = allRates.filter((rate) =>
+    isAnalysisRate(rate) && rate.observedAt.slice(0, 7) === currentMonth
+  );
+  const movementRows = gpuMovementRows(currentRows, previousRates, generatedAt, currentMonthRates);
   const trendGpus = movementRows.slice(0, 6).map((row) => row.gpuModel);
   return {
     currentRows,
     movementRows,
     movers: topMovers(changes),
     heatmapRows: regionalHeatmap(currentRows, movementRows.map((row) => row.gpuModel)),
-    trend: trendSeries([...previousRates, ...scrapedRates], trendGpus, generatedAt)
+    trend: trendSeries(allRates, trendGpus, generatedAt)
   };
 }
 
