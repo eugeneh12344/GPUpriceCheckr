@@ -98,9 +98,16 @@ test("dashboard graphics balance providers before combining prices", () => {
 
   const movement = summary.movementRows.find((row) => row.gpuModel === "H100");
   const trendLatest = summary.tableRows.find((row) => row.gpuModel === "H100");
-  assert.equal(movement.averagePrice, 5);
+  assert.equal(movement.averagePrice, 29);
   assert.equal(movement.averagePrice, trendLatest.pricePerGpuHour);
-  assert.notEqual(movement.averagePrice, 29);
+  assert.notEqual(movement.averagePrice, (4 + 100 + 6) / 3);
+  assert.deepEqual(
+    summary.chartRows.filter((row) => row.gpuModel === "H100").map((row) => [row.observedAt, row.pricePerGpuHour]),
+    [
+      ["2026-06-20T00:00:00.000Z", 2],
+      ["2026-06-28T00:00:00.000Z", 29]
+    ]
+  );
 
   const heatmap = summary.heatmapRows.find((row) => row.gpuModel === "H100");
   assert.equal(heatmap.cells["North America"].averagePrice, 52);

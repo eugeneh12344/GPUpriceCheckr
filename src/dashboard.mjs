@@ -119,10 +119,6 @@ function regionGroup(region = "") {
   return "Global / Other";
 }
 
-function monthKey(date) {
-  return new Date(date).toISOString().slice(0, 7);
-}
-
 function dayKey(date) {
   return new Date(date).toISOString().slice(0, 10);
 }
@@ -140,10 +136,10 @@ function directIndexObservations(rates) {
   const groups = new Map();
   for (const row of rates) {
     if (!Number.isFinite(priceValue(row))) continue;
-    const month = monthKey(row.observedAt);
-    const key = `${month}|${row.gpuModel}`;
+    const day = dayKey(row.observedAt);
+    const key = `${day}|${row.gpuModel}`;
     const group = groups.get(key) || {
-      month,
+      day,
       gpuModel: row.gpuModel,
       providerPrices: new Map(),
       sourceUrls: new Set(),
@@ -168,12 +164,12 @@ function directIndexObservations(rates) {
     if (price == null) return [];
     const commitment = group.commitments.size === 1 ? [...group.commitments][0] : "mixed";
     return [{
-      observedAt: `${group.month}-01T00:00:00.000Z`,
+      observedAt: `${group.day}T00:00:00.000Z`,
       gpuModel: group.gpuModel,
       group: groupForGpu(group.gpuModel),
       pricePerGpuHour: price,
       currency: "USD",
-      aggregation: "median-of-provider-medians",
+      aggregation: "daily-median-of-provider-medians",
       billingType: commitment,
       sourceName: "Collected Source Index",
       sourceUrl: [...group.sourceUrls][0] || "",

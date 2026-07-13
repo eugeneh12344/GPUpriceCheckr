@@ -222,40 +222,35 @@ function regionalHeatmap(currentRows, gpuOrder) {
   }).filter((row) => Number.isFinite(row.modelMedian));
 }
 
-function monthKey(date) {
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
-}
-
-function recentMonthKeys(generatedAt, count = 12) {
+function recentDayKeys(generatedAt, count = 90) {
   const date = new Date(generatedAt);
-  date.setUTCDate(1);
-  const months = [];
+  const days = [];
   for (let index = count - 1; index >= 0; index -= 1) {
-    const current = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() - index, 1));
-    months.push(monthKey(current));
+    const current = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() - index));
+    days.push(current.toISOString().slice(0, 10));
   }
-  return months;
+  return days;
 }
 
 function trendSeries(allRates, gpuModels, generatedAt) {
-  const months = recentMonthKeys(generatedAt);
-  const monthSet = new Set(months);
+  const days = recentDayKeys(generatedAt);
+  const daySet = new Set(days);
   const selected = new Set(gpuModels);
   const buckets = new Map();
   for (const rate of allRates.filter((item) => isAnalysisRate(item) && selected.has(item.gpuModel))) {
-    const month = rate.observedAt.slice(0, 7);
-    if (!monthSet.has(month)) continue;
-    const key = `${rate.gpuModel}|${rate.observedAt.slice(0, 7)}`;
+    const day = rate.observedAt.slice(0, 10);
+    if (!daySet.has(day)) continue;
+    const key = `${rate.gpuModel}|${day}`;
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key).push(rate);
   }
 
   return {
-    months,
+    days,
     series: gpuModels.map((gpuModel, index) => ({
       gpuModel,
       color: CHART_COLORS[index % CHART_COLORS.length],
-      values: months.map((month) => providerBalancedPrice(buckets.get(`${gpuModel}|${month}`) || []))
+      values: days.map((day) => providerBalancedPrice(buckets.get(`${gpuModel}|${day}`) || []))
     }))
   };
 }
@@ -263,11 +258,11 @@ function trendSeries(allRates, gpuModels, generatedAt) {
 function buildDigest({ scrapedRates, previousRates, changes, generatedAt }) {
   const currentRows = [...latestRateMap(scrapedRates.filter(isAnalysisRate)).values()];
   const allRates = [...previousRates, ...scrapedRates];
-  const currentMonth = new Date(generatedAt).toISOString().slice(0, 7);
-  const currentMonthRates = allRates.filter((rate) =>
-    isAnalysisRate(rate) && rate.observedAt.slice(0, 7) === currentMonth
+  const currentDay = new Date(generatedAt).toISOString().slice(0, 10);
+  const currentDayRates = allRates.filter((rate) =>
+    isAnalysisRate(rate) && rate.observedAt.slice(0, 10) === currentDay
   );
-  const movementRows = gpuMovementRows(currentRows, previousRates, generatedAt, currentMonthRates);
+  const movementRows = gpuMovementRows(currentRows, previousRates, generatedAt, currentDayRates);
   const trendGpus = movementRows.slice(0, 6).map((row) => row.gpuModel);
   return {
     currentRows,
@@ -382,7 +377,7 @@ function renderTrendChart(trend) {
   const yMax = max + pad;
   const plotWidth = width - margin.left - margin.right;
   const plotHeight = height - margin.top - margin.bottom;
-  const xFor = (index) => margin.left + (trend.months.length === 1 ? plotWidth : (index / (trend.months.length - 1)) * plotWidth);
+  const xFor = (index) => margin.left + (trend.days.length === 1 ? plotWidth : (index / (trend.days.length - 1)) * plotWidth);
   const yFor = (value) => margin.top + (1 - ((value - yMin) / (yMax - yMin))) * plotHeight;
   const ticks = [0, 0.5, 1].map((ratio) => yMin + (yMax - yMin) * ratio);
   const grid = ticks.map((tick) => {
@@ -390,9 +385,10 @@ function renderTrendChart(trend) {
     return `<line x1="${margin.left}" y1="${y.toFixed(1)}" x2="${width - margin.right}" y2="${y.toFixed(1)}" stroke="#e5e2d6" />
       <text x="${margin.left - 8}" y="${(y + 4).toFixed(1)}" text-anchor="end" font-size="11" fill="#6d746d">${money(tick)}</text>`;
   }).join("");
-  const monthLabels = trend.months.map((month, index) => {
-    if (index % 2 && index !== trend.months.length - 1) return "";
-    return `<text x="${xFor(index).toFixed(1)}" y="${height - 16}" text-anchor="middle" font-size="10" fill="#6d746d">${htmlEscape(month.slice(2))}</text>`;
+  const labelInterval = Math.max(1, Math.ceil(trend.days.length / 6));
+  const dayLabels = trend.days.map((day, index) => {
+    if (index % labelInterval && index !== trend.days.length - 1) return "";
+    return `<text x="${xFor(index).toFixed(1)}" y="${height - 16}" text-anchor="middle" font-size="10" fill="#6d746d">${htmlEscape(day.slice(5))}</text>`;
   }).join("");
   const polylines = trend.series.map((series) => {
     const points = series.values
@@ -409,8 +405,8 @@ function renderTrendChart(trend) {
     <rect width="${width}" height="${height}" fill="#fffefa" />
     ${grid}
     ${polylines}
-    ${monthLabels}
-    <text x="${margin.left}" y="16" font-size="12" fill="#343b34">Monthly provider-balanced on-demand index per GPU-hour</text>
+    ${dayLabels}
+    <text x="${margin.left}" y="16" font-size="12" fill="#343b34">Daily provider-balanced on-demand index per GPU-hour</text>
   </svg>
   <div style="margin-top:8px;">${legend}</div>`;
 }

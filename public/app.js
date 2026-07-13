@@ -439,10 +439,10 @@ function directIndexObservations(rows = filteredDirectRates({ defaultCommitment:
   for (const row of rows) {
     const price = priceValue(row);
     if (!Number.isFinite(price)) continue;
-    const month = monthKey(row.observedAt);
-    const key = `${month}|${row.gpuModel}`;
+    const day = dayKey(row.observedAt);
+    const key = `${day}|${row.gpuModel}`;
     const group = groups.get(key) || {
-      month,
+      day,
       gpuModel: row.gpuModel,
       providerPrices: new Map(),
       sourceUrls: new Set(),
@@ -467,12 +467,12 @@ function directIndexObservations(rows = filteredDirectRates({ defaultCommitment:
     const providerCount = group.providerPrices.size;
     const commitment = group.commitments.size === 1 ? [...group.commitments][0] : "mixed";
     return [{
-      observedAt: `${group.month}-01T00:00:00.000Z`,
+      observedAt: `${group.day}T00:00:00.000Z`,
       gpuModel: group.gpuModel,
       group: groupForGpu(group.gpuModel),
       pricePerGpuHour: price,
       currency: "USD",
-      aggregation: "median-of-provider-medians",
+      aggregation: "daily-median-of-provider-medians",
       billingType: commitment,
       sourceName: "Collected Source Index",
       sourceUrl: [...group.sourceUrls][0] || "",
@@ -553,9 +553,15 @@ function monthBounds(date) {
   return { from: start.toISOString(), to: end.toISOString() };
 }
 
+function dayBounds(date) {
+  const day = dayKey(date);
+  return { from: `${day}T00:00:00.000Z`, to: `${day}T23:59:59.999Z` };
+}
+
 async function directObservationsFor(indexRow) {
-  const selectedMonth = monthKey(indexRow.observedAt);
-  const { from, to } = monthBounds(indexRow.observedAt);
+  const isDaily = indexRow.aggregation?.startsWith("daily-");
+  const selectedPeriod = isDaily ? dayKey(indexRow.observedAt) : monthKey(indexRow.observedAt);
+  const { from, to } = isDaily ? dayBounds(indexRow.observedAt) : monthBounds(indexRow.observedAt);
   const params = new URLSearchParams({ gpu: indexRow.gpuModel, from, to });
   const provider = $("#providerFilter").value;
   const region = $("#regionFilter").value;
@@ -567,7 +573,7 @@ async function directObservationsFor(indexRow) {
   return rows.filter((row) =>
     Number.isFinite(priceValue(row)) &&
     row.gpuModel === indexRow.gpuModel &&
-    monthKey(row.observedAt) === selectedMonth
+    (isDaily ? dayKey(row.observedAt) : monthKey(row.observedAt)) === selectedPeriod
   ).toSorted((a, b) => a.provider.localeCompare(b.provider) || priceValue(a) - priceValue(b));
 }
 
@@ -655,7 +661,7 @@ async function showSourceDetails(indexRow) {
         <div class="sources compact">${aggregateCard}</div>
       </section>
       <section class="dialog-section">
-        <h3>Direct sources for the same GPU and month</h3>
+        <h3>Direct sources for the same GPU and index period</h3>
         <div class="sources compact">${sourceList}</div>
       </section>
       <section class="dialog-section">
@@ -1055,8 +1061,9 @@ function renderLoadingPanels() {
 function render() {
   const cohortLabel = $("#gpuFilter").selectedOptions[0]?.textContent.split(" · ")[0] || "All models";
   const datasetLabel = $("#datasetFilter").selectedOptions[0]?.textContent || "Collected source index";
+  const frequencyLabel = $("#datasetFilter").value === "direct" ? "Daily" : "Monthly";
 
-  $("#chartTitle").textContent = `${cohortLabel} · ${datasetLabel}`;
+  $("#chartTitle").textContent = `${cohortLabel} · ${datasetLabel} · ${frequencyLabel}`;
 
   renderSources();
   renderRuns();
