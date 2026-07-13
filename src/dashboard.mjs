@@ -27,11 +27,6 @@ function median(values) {
     : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2;
 }
 
-function average(values) {
-  const valid = values.filter((value) => Number.isFinite(value));
-  return valid.length ? valid.reduce((sum, value) => sum + value, 0) / valid.length : null;
-}
-
 function pctChange(current, previous) {
   if (!Number.isFinite(current) || !Number.isFinite(previous) || previous === 0) return null;
   return ((current - previous) / previous) * 100;
@@ -69,6 +64,14 @@ function groupBy(values, keyFn) {
   return groups;
 }
 
+function providerBalancedPrice(rows) {
+  const providerMedians = [...groupBy(
+    rows.filter((row) => Number.isFinite(priceValue(row))),
+    (row) => row.provider
+  ).values()].map((providerRows) => median(providerRows.map(priceValue)));
+  return median(providerMedians);
+}
+
 function latestRateMap(rates, cutoff = Infinity) {
   const latest = new Map();
   for (const row of rates) {
@@ -90,8 +93,8 @@ function matchedComparison(currentRows, allRates, cutoff) {
   if (!pairs.length) return null;
   return {
     change: pctChange(
-      average(pairs.map((pair) => priceValue(pair.current))),
-      average(pairs.map((pair) => priceValue(pair.previous)))
+      providerBalancedPrice(pairs.map((pair) => pair.current)),
+      providerBalancedPrice(pairs.map((pair) => pair.previous))
     ),
     matched: pairs.length
   };
@@ -189,7 +192,7 @@ function movementRows(currentRows, allRates, generatedAt) {
   const generatedTime = generatedAt.getTime();
   return [...groupBy(currentRows, (row) => row.gpuModel).entries()].map(([gpuModel, rows]) => ({
     gpuModel,
-    averagePrice: average(rows.map(priceValue)),
+    averagePrice: providerBalancedPrice(rows),
     observations: rows.length,
     providerCount: new Set(rows.map((row) => row.provider)).size,
     regionCount: new Set(rows.map((row) => row.region)).size,
@@ -258,10 +261,20 @@ function previousRateMap(currentRows, allRates) {
 
 function topMoverRows(currentRows, allRates) {
   const previousByKey = previousRateMap(currentRows, allRates);
-  return currentRows.map((row) => {
-    const previous = previousByKey.get(rateKey(row));
-    const deltaPercent = previous ? pctChange(priceValue(row), priceValue(previous)) : null;
-    return { ...row, previous, deltaPercent };
+  return [...groupBy(currentRows, (row) => row.gpuModel).entries()].map(([gpuModel, rows]) => {
+    const pairs = rows
+      .map((current) => ({ current, previous: previousByKey.get(rateKey(current)) }))
+      .filter((pair) => pair.previous);
+    const currentPrice = providerBalancedPrice(pairs.map((pair) => pair.current));
+    const previousPrice = providerBalancedPrice(pairs.map((pair) => pair.previous));
+    return {
+      gpuModel,
+      pricePerGpuHour: currentPrice,
+      previousPrice,
+      deltaPercent: pctChange(currentPrice, previousPrice),
+      providerCount: new Set(pairs.map((pair) => pair.current.provider)).size,
+      observations: pairs.length
+    };
   }).filter((row) => Number.isFinite(row.deltaPercent))
     .toSorted((a, b) => Math.abs(b.deltaPercent) - Math.abs(a.deltaPercent))
     .slice(0, 8);
@@ -272,9 +285,9 @@ function regionalHeatmapRows(currentRows) {
     .toSorted((a, b) => priorityIndex(a[0]) - priorityIndex(b[0]) || a[0].localeCompare(b[0]))
     .slice(0, 8)
     .map(([gpuModel, rows]) => {
-      const modelMedian = median(rows.map(priceValue));
+      const modelMedian = providerBalancedPrice(rows);
       const cells = Object.fromEntries(REGION_GROUPS.map((group) => {
-        const groupAverage = average(rows.filter((row) => regionGroup(row.region) === group).map(priceValue));
+        const groupAverage = providerBalancedPrice(rows.filter((row) => regionGroup(row.region) === group));
         return [group, {
           averagePrice: groupAverage,
           relativeToMedian: Number.isFinite(modelMedian) && Number.isFinite(groupAverage)
@@ -299,14 +312,17 @@ function regionalHeatmapRows(currentRows) {
 function cheapestRegionRows(currentRows) {
   return [...groupBy(currentRows, (row) => row.gpuModel).entries()]
     .map(([gpuModel, rows]) => {
-      const bestByRegion = new Map();
-      for (const row of rows) {
-        const current = bestByRegion.get(row.region);
-        if (!current || priceValue(row) < priceValue(current)) bestByRegion.set(row.region, row);
-      }
+      const regions = [...groupBy(rows, (row) => row.region).entries()].map(([region, regionRows]) => ({
+        region,
+        pricePerGpuHour: providerBalancedPrice(regionRows),
+        provider: "Provider-balanced index",
+        providerCount: new Set(regionRows.map((row) => row.provider)).size
+      }));
       return {
         gpuModel,
-        picks: [...bestByRegion.values()].toSorted((a, b) => priceValue(a) - priceValue(b)).slice(0, 3)
+        picks: regions.filter((row) => Number.isFinite(priceValue(row)))
+          .toSorted((a, b) => priceValue(a) - priceValue(b))
+          .slice(0, 3)
       };
     })
     .filter((row) => row.picks.length)
@@ -333,9 +349,15 @@ function providerSpreadRows(currentRows) {
 function commitmentDiscountRows(rows) {
   return [...groupBy([...latestRateMap(rows).values()], (row) => row.gpuModel).entries()]
     .map(([gpuModel, gpuRows]) => {
-      const onDemand = median(gpuRows.filter((row) => row.commitment === "on-demand").map(priceValue));
-      const bestCommitted = gpuRows
-        .filter((row) => row.commitment !== "on-demand")
+      const onDemand = providerBalancedPrice(gpuRows.filter((row) => row.commitment === "on-demand"));
+      const bestCommitted = [...groupBy(
+        gpuRows.filter((row) => row.commitment !== "on-demand"),
+        (row) => row.commitment
+      ).entries()].map(([commitment, commitmentRows]) => ({
+        commitment,
+        provider: "Provider-balanced index",
+        pricePerGpuHour: providerBalancedPrice(commitmentRows)
+      })).filter((row) => Number.isFinite(priceValue(row)))
         .toSorted((a, b) => priceValue(a) - priceValue(b))[0];
       return {
         gpuModel,
@@ -364,9 +386,10 @@ function isDiscountCandidate(row) {
 }
 
 export function buildDashboardSummary({ meta, rates, chartRates = rates, panelRates = rates, generatedAt = new Date() }) {
-  const onDemandRows = panelRates.filter((row) => row.commitment === "on-demand");
+  const directPanelRates = panelRates.filter((row) => row.sourceKind !== "benchmark-seed");
+  const onDemandRows = directPanelRates.filter((row) => row.commitment === "on-demand");
   const currentRows = [...latestRateMap(onDemandRows).values()].filter((row) => isDefaultGpu(row.gpuModel));
-  const spotRows = panelRates.filter((row) => row.commitment === "spot");
+  const spotRows = directPanelRates.filter((row) => row.commitment === "spot");
   const currentSpotRows = [...latestRateMap(spotRows).values()].filter((row) => isDefaultGpu(row.gpuModel));
   const chartCutoff = new Date(Date.UTC(generatedAt.getUTCFullYear(), generatedAt.getUTCMonth() - 24, 1));
   const fullChartRows = directIndexObservations(chartRates.filter((row) => row.commitment === "on-demand"))
@@ -396,7 +419,7 @@ export function buildDashboardSummary({ meta, rates, chartRates = rates, panelRa
     group: row.group,
     pricePerGpuHour: row.pricePerGpuHour
   }));
-  const defaultPanelRates = panelRates.filter((row) => isDefaultGpu(row.gpuModel));
+  const defaultPanelRates = directPanelRates.filter((row) => isDefaultGpu(row.gpuModel));
 
   return {
     freshness: { latestPricePull: latestPriceTimestamp(panelRates.length ? panelRates : rates) },

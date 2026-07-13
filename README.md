@@ -89,9 +89,11 @@ COLLECT_ONLY=true PROVIDERS=googleCloud npm run daily-report
 Without `COLLECT_ONLY=true`, the same provider filter sends a normal daily
 report email for only those providers.
 
-Daily report emails are digest-style: they summarize on-demand average prices by
-GPU, top exact-row movers, regional relative-price heatmaps, and compact
+Daily report emails are digest-style: they summarize the on-demand provider-balanced
+index by GPU, index-level movers, regional relative-price heatmaps, and compact
 multi-GPU trend charts instead of listing every collected observation.
+
+Every cross-provider price shown in site graphics and email digests uses the same provider-balanced index: the median price is calculated within each provider first, then the median is calculated across providers. This prevents providers with more regions or SKUs from receiving extra weight.
 
 ## API
 

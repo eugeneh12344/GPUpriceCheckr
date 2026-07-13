@@ -36,11 +36,6 @@ function isAnalysisRate(rate) {
   return rate.commitment === ANALYSIS_COMMITMENT && Number.isFinite(priceValue(rate));
 }
 
-function average(values) {
-  const valid = values.filter((value) => Number.isFinite(value));
-  return valid.length ? valid.reduce((sum, value) => sum + value, 0) / valid.length : null;
-}
-
 function median(values) {
   const sorted = values.filter((value) => Number.isFinite(value)).toSorted((a, b) => a - b);
   if (!sorted.length) return null;
@@ -110,8 +105,8 @@ function matchedComparison(rows, previousRates, cutoff) {
     .filter((pair) => pair.previous);
   if (!pairs.length) return null;
 
-  const currentAverage = average(pairs.map((pair) => priceValue(pair.current)));
-  const previousAverage = average(pairs.map((pair) => priceValue(pair.previous)));
+  const currentAverage = providerBalancedPrice(pairs.map((pair) => pair.current));
+  const previousAverage = providerBalancedPrice(pairs.map((pair) => pair.previous));
   return {
     change: pctChange(currentAverage, previousAverage),
     matched: pairs.length
@@ -128,6 +123,14 @@ function groupBy(values, keyFn) {
   return groups;
 }
 
+function providerBalancedPrice(rows) {
+  const providerMedians = [...groupBy(
+    rows.filter((row) => Number.isFinite(priceValue(row))),
+    (row) => row.provider
+  ).values()].map((providerRows) => median(providerRows.map(priceValue)));
+  return median(providerMedians);
+}
+
 function gpuMovementRows(currentRows, previousRates, generatedAt) {
   const generatedTime = new Date(generatedAt).getTime();
   return [...groupBy(currentRows, (rate) => rate.gpuModel).entries()].map(([gpuModel, rows]) => {
@@ -139,7 +142,7 @@ function gpuMovementRows(currentRows, previousRates, generatedAt) {
     }));
     return {
       gpuModel,
-      averagePrice: average(rows.map(priceValue)),
+      averagePrice: providerBalancedPrice(rows),
       observations: rows.length,
       providerCount: providers.size,
       regionCount: regions.size,
@@ -153,8 +156,21 @@ function gpuMovementRows(currentRows, previousRates, generatedAt) {
 }
 
 function topMovers(changes) {
-  const matched = changes
-    .filter((rate) => isAnalysisRate(rate) && rate.previous && Number.isFinite(rate.deltaPercent))
+  const matched = [...groupBy(changes.filter(isAnalysisRate), (rate) => rate.gpuModel).entries()]
+    .map(([gpuModel, rows]) => {
+      const pairs = rows.filter((rate) => rate.previous);
+      const currentPrice = providerBalancedPrice(pairs);
+      const previousPrice = providerBalancedPrice(pairs.map((rate) => rate.previous));
+      return {
+        gpuModel,
+        currentPrice,
+        previousPrice,
+        deltaPercent: pctChange(currentPrice, previousPrice),
+        providerCount: new Set(pairs.map((rate) => rate.provider)).size,
+        observations: pairs.length
+      };
+    })
+    .filter((row) => Number.isFinite(row.deltaPercent))
     .toSorted((a, b) => Math.abs(b.deltaPercent) - Math.abs(a.deltaPercent));
   return {
     drops: matched.filter((rate) => rate.deltaPercent < 0).slice(0, 5),
@@ -193,11 +209,9 @@ function regionGroup(region = "") {
 function regionalHeatmap(currentRows, gpuOrder) {
   return gpuOrder.slice(0, 10).map((gpuModel) => {
     const rows = currentRows.filter((rate) => rate.gpuModel === gpuModel);
-    const modelMedian = median(rows.map(priceValue));
+    const modelMedian = providerBalancedPrice(rows);
     const cells = Object.fromEntries(REGION_GROUPS.map((group) => {
-      const groupAverage = average(rows
-        .filter((rate) => regionGroup(rate.region) === group)
-        .map(priceValue));
+      const groupAverage = providerBalancedPrice(rows.filter((rate) => regionGroup(rate.region) === group));
       return [group, {
         averagePrice: groupAverage,
         relativeToMedian: modelMedian && groupAverage ? groupAverage / modelMedian : null
@@ -226,21 +240,13 @@ function trendSeries(allRates, gpuModels, generatedAt) {
   const months = recentMonthKeys(generatedAt);
   const monthSet = new Set(months);
   const selected = new Set(gpuModels);
-  const latestByMonthKey = new Map();
-
+  const buckets = new Map();
   for (const rate of allRates.filter((item) => isAnalysisRate(item) && selected.has(item.gpuModel))) {
     const month = rate.observedAt.slice(0, 7);
     if (!monthSet.has(month)) continue;
-    const key = [rate.gpuModel, month, rateKey(rate)].join("|");
-    const current = latestByMonthKey.get(key);
-    if (!current || observedTime(rate) > observedTime(current)) latestByMonthKey.set(key, rate);
-  }
-
-  const buckets = new Map();
-  for (const rate of latestByMonthKey.values()) {
     const key = `${rate.gpuModel}|${rate.observedAt.slice(0, 7)}`;
     if (!buckets.has(key)) buckets.set(key, []);
-    buckets.get(key).push(priceValue(rate));
+    buckets.get(key).push(rate);
   }
 
   return {
@@ -248,7 +254,7 @@ function trendSeries(allRates, gpuModels, generatedAt) {
     series: gpuModels.map((gpuModel, index) => ({
       gpuModel,
       color: CHART_COLORS[index % CHART_COLORS.length],
-      values: months.map((month) => average(buckets.get(`${gpuModel}|${month}`) || []))
+      values: months.map((month) => providerBalancedPrice(buckets.get(`${gpuModel}|${month}`) || []))
     }))
   };
 }
@@ -298,7 +304,7 @@ function renderMovementTable(rows) {
     <thead>
       <tr style="background:#171a17;color:#ffffff;">
         <th align="left" style="padding:8px;">GPU</th>
-        <th align="right" style="padding:8px;">Avg</th>
+        <th align="right" style="padding:8px;">Index</th>
         <th align="right" style="padding:8px;">Rows</th>
         <th align="right" style="padding:8px;">Sources</th>
         ${LOOKBACKS.map((lookback) => `<th align="right" style="padding:8px;">${lookback.label}</th>`).join("")}
@@ -309,31 +315,29 @@ function renderMovementTable(rows) {
 }
 
 function moverLabel(rate) {
-  const movement = `${formatMaybe(priceValue(rate.previous), money)} -> ${formatMaybe(priceValue(rate), money)} (${percent(rate.deltaPercent)})`;
-  return `${rate.provider} ${rate.gpuModel} ${rate.region}: ${movement}`;
+  const movement = `${formatMaybe(rate.previousPrice, money)} -> ${formatMaybe(rate.currentPrice, money)} (${percent(rate.deltaPercent)})`;
+  return `${rate.gpuModel} provider-balanced index across ${rate.providerCount} providers: ${movement}`;
 }
 
 function renderMoverTable(title, rows) {
   const body = rows.map((rate) => `<tr>
-    <td style="padding:7px;border-bottom:1px solid #e5e2d6;">${htmlEscape(rate.provider)}</td>
     <td style="padding:7px;border-bottom:1px solid #e5e2d6;font-weight:700;">${htmlEscape(rate.gpuModel)}</td>
-    <td style="padding:7px;border-bottom:1px solid #e5e2d6;">${htmlEscape(rate.region)}</td>
-    <td style="padding:7px;border-bottom:1px solid #e5e2d6;text-align:right;">${formatMaybe(priceValue(rate.previous), money)}</td>
-    <td style="padding:7px;border-bottom:1px solid #e5e2d6;text-align:right;">${formatMaybe(priceValue(rate), money)}</td>
+    <td style="padding:7px;border-bottom:1px solid #e5e2d6;text-align:right;">${rate.providerCount}</td>
+    <td style="padding:7px;border-bottom:1px solid #e5e2d6;text-align:right;">${formatMaybe(rate.previousPrice, money)}</td>
+    <td style="padding:7px;border-bottom:1px solid #e5e2d6;text-align:right;">${formatMaybe(rate.currentPrice, money)}</td>
     <td style="padding:7px;border-bottom:1px solid #e5e2d6;text-align:right;${pctCellStyle(rate.deltaPercent)}">${percent(rate.deltaPercent)}</td>
   </tr>`).join("");
 
   return `<h3 style="margin:18px 0 8px 0;font-size:15px;">${htmlEscape(title)}</h3>
   <table cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;font-size:13px;">
     <thead><tr style="background:#ede9d8;">
-      <th align="left" style="padding:7px;">Provider</th>
       <th align="left" style="padding:7px;">GPU</th>
-      <th align="left" style="padding:7px;">Region</th>
+      <th align="right" style="padding:7px;">Providers</th>
       <th align="right" style="padding:7px;">Was</th>
       <th align="right" style="padding:7px;">Now</th>
       <th align="right" style="padding:7px;">Move</th>
     </tr></thead>
-    <tbody>${body || `<tr><td colspan="6" style="padding:10px;color:#7d827b;">No matched on-demand rows.</td></tr>`}</tbody>
+    <tbody>${body || `<tr><td colspan="5" style="padding:10px;color:#7d827b;">No matched on-demand index rows.</td></tr>`}</tbody>
   </table>`;
 }
 
@@ -353,7 +357,7 @@ function renderHeatmap(rows) {
     </tr></thead>
     <tbody>${body || `<tr><td colspan="7" style="padding:12px;color:#7d827b;">No regional on-demand rows collected.</td></tr>`}</tbody>
   </table>
-  <p style="margin:8px 0 0 0;color:#6d746d;font-size:12px;">Cells are colored relative to each GPU's collected median: green is cheaper, red is more expensive.</p>`;
+  <p style="margin:8px 0 0 0;color:#6d746d;font-size:12px;">Cells use the provider-balanced index and are colored relative to each GPU's index: green is cheaper, red is more expensive.</p>`;
 }
 
 function renderTrendChart(trend) {
@@ -395,12 +399,12 @@ function renderTrendChart(trend) {
     <span style="display:inline-block;width:10px;height:10px;background:${series.color};border-radius:10px;margin-right:5px;"></span>${htmlEscape(series.gpuModel)}
   </span>`).join("");
 
-  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="GPU average price trend over time" style="max-width:100%;height:auto;border:1px solid #e5e2d6;background:#fffefa;">
+  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="GPU provider-balanced price index trend over time" style="max-width:100%;height:auto;border:1px solid #e5e2d6;background:#fffefa;">
     <rect width="${width}" height="${height}" fill="#fffefa" />
     ${grid}
     ${polylines}
     ${monthLabels}
-    <text x="${margin.left}" y="16" font-size="12" fill="#343b34">Monthly average on-demand price per GPU-hour</text>
+    <text x="${margin.left}" y="16" font-size="12" fill="#343b34">Monthly provider-balanced on-demand index per GPU-hour</text>
   </svg>
   <div style="margin-top:8px;">${legend}</div>`;
 }
@@ -419,7 +423,7 @@ function renderHtml({ digest, failures, generatedAt, results, collected }) {
     <body style="margin:0;padding:0;background:#f7f5ec;font-family:Arial,sans-serif;color:#171a17;">
       <div style="max-width:760px;margin:0 auto;padding:24px;">
         <h1 style="margin:0 0 6px 0;font-size:26px;">GPU rental rate daily report</h1>
-        <p style="margin:0 0 18px 0;color:#5f665f;">Generated ${htmlEscape(generatedAt)}. On-demand rows drive the movement tables and charts.</p>
+        <p style="margin:0 0 18px 0;color:#5f665f;">Generated ${htmlEscape(generatedAt)}. All cross-provider prices use the median of provider-level medians.</p>
         <table cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border-spacing:8px;margin:0 -8px 18px -8px;">
           <tr>
             <td style="${cardStyle}"><strong style="font-size:20px;">${collected}</strong><br><span style="color:#6d746d;">rows collected</span></td>
@@ -429,7 +433,7 @@ function renderHtml({ digest, failures, generatedAt, results, collected }) {
           </tr>
         </table>
         ${failuresHtml}
-        <h2 style="font-size:18px;margin:24px 0 8px 0;">Average Price By GPU</h2>
+        <h2 style="font-size:18px;margin:24px 0 8px 0;">Provider-Balanced Index By GPU</h2>
         ${renderMovementTable(digest.movementRows)}
         <h2 style="font-size:18px;margin:24px 0 8px 0;">Top Movers</h2>
         ${renderMoverTable("Biggest price drops", digest.movers.drops)}
@@ -447,7 +451,7 @@ function renderHtml({ digest, failures, generatedAt, results, collected }) {
 function renderText({ digest, failures, generatedAt, collected }) {
   const movementLines = digest.movementRows.map((row) => {
     const moves = LOOKBACKS.map((lookback) => `${lookback.label}: ${formatMaybe(row.comparisons[lookback.key]?.change, percent)}`).join(", ");
-    return `- ${row.gpuModel}: ${formatMaybe(row.averagePrice, money)} avg across ${row.observations} rows (${moves})`;
+    return `- ${row.gpuModel}: ${formatMaybe(row.averagePrice, money)} provider-balanced index across ${row.providerCount} providers (${moves})`;
   });
   const dropLines = digest.movers.drops.map((rate) => `- ${moverLabel(rate)}`);
   const increaseLines = digest.movers.increases.map((rate) => `- ${moverLabel(rate)}`);
@@ -459,7 +463,7 @@ function renderText({ digest, failures, generatedAt, collected }) {
     "",
     failures.length ? `Needs attention:\n${failures.map((failure) => `- ${failure.provider}: ${failure.message}`).join("\n")}` : "No collection failures.",
     "",
-    "Average price by GPU",
+    "Provider-balanced index by GPU",
     movementLines.length ? movementLines.join("\n") : "No on-demand rows collected.",
     "",
     "Biggest price drops",

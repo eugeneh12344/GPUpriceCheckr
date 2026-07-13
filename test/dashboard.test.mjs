@@ -82,3 +82,24 @@ test("dashboard summary keeps first-load chart payload slim", () => {
   assert.equal(h100Heatmap.cells.Europe.relativeToMedian, 1.2);
   assert.equal(h100Heatmap.cells.Europe.priceScore, 1);
 });
+
+test("dashboard graphics balance providers before combining prices", () => {
+  const rates = [
+    rate({ provider: "AWS", region: "us-east-1", pricePerGpuHour: 4 }),
+    rate({ provider: "AWS", region: "us-west-2", pricePerGpuHour: 100 }),
+    rate({ provider: "Google Cloud", region: "europe-west1", pricePerGpuHour: 6 })
+  ];
+  const summary = buildDashboardSummary({
+    meta: { range: { count: rates.length }, gpus: ["H100"], regions: [], providers: [] },
+    rates,
+    generatedAt: new Date("2026-06-28T12:00:00.000Z")
+  });
+
+  const movement = summary.movementRows.find((row) => row.gpuModel === "H100");
+  assert.equal(movement.averagePrice, 29);
+  assert.notEqual(movement.averagePrice, (4 + 100 + 6) / 3);
+
+  const heatmap = summary.heatmapRows.find((row) => row.gpuModel === "H100");
+  assert.equal(heatmap.cells["North America"].averagePrice, 52);
+  assert.equal(heatmap.cells.Europe.averagePrice, 6);
+});

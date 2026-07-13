@@ -79,11 +79,6 @@ function median(values) {
     : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2;
 }
 
-function average(values) {
-  const valid = values.filter((value) => Number.isFinite(value));
-  return valid.length ? valid.reduce((sum, value) => sum + value, 0) / valid.length : null;
-}
-
 function pctChange(current, previous) {
   if (!Number.isFinite(current) || !Number.isFinite(previous) || previous === 0) return null;
   return ((current - previous) / previous) * 100;
@@ -137,6 +132,14 @@ function groupBy(values, keyFn) {
     groups.get(key).push(value);
   }
   return groups;
+}
+
+function providerBalancedPrice(rows) {
+  const providerMedians = [...groupBy(
+    rows.filter((row) => Number.isFinite(priceValue(row))),
+    (row) => row.provider
+  ).values()].map((providerRows) => median(providerRows.map(priceValue)));
+  return median(providerMedians);
 }
 
 function priorityIndex(gpuModel) {
@@ -332,6 +335,7 @@ function filteredDirectRates({ defaultCommitment = null } = {}) {
   const selectedCommitment = $("#commitmentFilter").value;
   const commitment = selectedCommitment === "all" && defaultCommitment ? defaultCommitment : selectedCommitment;
   return state.rates.filter((row) =>
+    row.sourceKind !== "benchmark-seed" &&
     (provider === "all" || row.provider === provider) &&
     (region === "all" || row.region === region) &&
     (commitment === "all" || row.commitment === commitment)
@@ -351,6 +355,7 @@ function directPanelRates({ ignoreCommitment = false } = {}) {
   const commitment = $("#commitmentFilter").value;
   return state.rates.filter((row) =>
     Number.isFinite(priceValue(row)) &&
+    row.sourceKind !== "benchmark-seed" &&
     matchesSelectedCohort(row) &&
     (!applyDirectFilters || provider === "all" || row.provider === provider) &&
     (!applyDirectFilters || region === "all" || row.region === region) &&
@@ -383,8 +388,8 @@ function matchedComparison(currentRows, allRates, cutoff) {
     .map((row) => ({ current: row, previous: previousByKey.get(rateKey(row)) }))
     .filter((pair) => pair.previous);
   if (!pairs.length) return null;
-  const currentAverage = average(pairs.map((pair) => priceValue(pair.current)));
-  const previousAverage = average(pairs.map((pair) => priceValue(pair.previous)));
+  const currentAverage = providerBalancedPrice(pairs.map((pair) => pair.current));
+  const previousAverage = providerBalancedPrice(pairs.map((pair) => pair.previous));
   return { change: pctChange(currentAverage, previousAverage), matched: pairs.length };
 }
 
@@ -695,7 +700,7 @@ function movementRows(currentRows, allRates) {
     ]));
     return {
       gpuModel,
-      averagePrice: average(rows.map(priceValue)),
+      averagePrice: providerBalancedPrice(rows),
       observations: rows.length,
       providerCount: new Set(rows.map((row) => row.provider)).size,
       regionCount: new Set(rows.map((row) => row.region)).size,
@@ -710,11 +715,20 @@ function movementRows(currentRows, allRates) {
 
 function topMoverRows(currentRows, allRates) {
   const previousByKey = previousRateMap(currentRows, allRates);
-  return currentRows.map((row) => {
-    const previous = previousByKey.get(rateKey(row));
-    const delta = previous ? priceValue(row) - priceValue(previous) : null;
-    const deltaPercent = previous ? pctChange(priceValue(row), priceValue(previous)) : null;
-    return { ...row, previous, delta, deltaPercent };
+  return [...groupBy(currentRows, (row) => row.gpuModel).entries()].map(([gpuModel, rows]) => {
+    const pairs = rows
+      .map((current) => ({ current, previous: previousByKey.get(rateKey(current)) }))
+      .filter((pair) => pair.previous);
+    const currentPrice = providerBalancedPrice(pairs.map((pair) => pair.current));
+    const previousPrice = providerBalancedPrice(pairs.map((pair) => pair.previous));
+    return {
+      gpuModel,
+      pricePerGpuHour: currentPrice,
+      previousPrice,
+      deltaPercent: pctChange(currentPrice, previousPrice),
+      providerCount: new Set(pairs.map((pair) => pair.current.provider)).size,
+      observations: pairs.length
+    };
   }).filter((row) => Number.isFinite(row.deltaPercent))
     .toSorted((a, b) => Math.abs(b.deltaPercent) - Math.abs(a.deltaPercent))
     .slice(0, 8);
@@ -726,11 +740,9 @@ function regionalHeatmapRows(currentRows) {
     .slice(0, 8);
 
   return gpuRows.map(([gpuModel, rows]) => {
-    const modelMedian = median(rows.map(priceValue));
+    const modelMedian = providerBalancedPrice(rows);
     const cells = Object.fromEntries(REGION_GROUPS.map((group) => {
-      const groupAverage = average(rows
-        .filter((row) => regionGroup(row.region) === group)
-        .map(priceValue));
+      const groupAverage = providerBalancedPrice(rows.filter((row) => regionGroup(row.region) === group));
       return [group, {
         averagePrice: groupAverage,
         relativeToMedian: Number.isFinite(modelMedian) && Number.isFinite(groupAverage)
@@ -755,15 +767,17 @@ function regionalHeatmapRows(currentRows) {
 function cheapestRegionRows(currentRows) {
   return [...groupBy(currentRows, (row) => row.gpuModel).entries()]
     .map(([gpuModel, rows]) => {
-      const bestByRegion = new Map();
-      for (const row of rows) {
-        const key = row.region;
-        const current = bestByRegion.get(key);
-        if (!current || priceValue(row) < priceValue(current)) bestByRegion.set(key, row);
-      }
+      const regions = [...groupBy(rows, (row) => row.region).entries()].map(([region, regionRows]) => ({
+        region,
+        pricePerGpuHour: providerBalancedPrice(regionRows),
+        provider: "Provider-balanced index",
+        providerCount: new Set(regionRows.map((row) => row.provider)).size
+      }));
       return {
         gpuModel,
-        picks: [...bestByRegion.values()].toSorted((a, b) => priceValue(a) - priceValue(b)).slice(0, 3)
+        picks: regions.filter((row) => Number.isFinite(priceValue(row)))
+          .toSorted((a, b) => priceValue(a) - priceValue(b))
+          .slice(0, 3)
       };
     })
     .filter((row) => row.picks.length)
@@ -803,9 +817,15 @@ function commitmentDiscountRows(allRows) {
   const latestRows = [...latestRateMap(allRows).values()];
   return [...groupBy(latestRows, (row) => row.gpuModel).entries()]
     .map(([gpuModel, rows]) => {
-      const onDemand = median(rows.filter((row) => row.commitment === "on-demand").map(priceValue));
-      const bestCommitted = rows
-        .filter((row) => row.commitment !== "on-demand")
+      const onDemand = providerBalancedPrice(rows.filter((row) => row.commitment === "on-demand"));
+      const bestCommitted = [...groupBy(
+        rows.filter((row) => row.commitment !== "on-demand"),
+        (row) => row.commitment
+      ).entries()].map(([commitment, commitmentRows]) => ({
+        commitment,
+        provider: "Provider-balanced index",
+        pricePerGpuHour: providerBalancedPrice(commitmentRows)
+      })).filter((row) => Number.isFinite(priceValue(row)))
         .toSorted((a, b) => priceValue(a) - priceValue(b))[0];
       const discount = bestCommitted && Number.isFinite(onDemand)
         ? (1 - priceValue(bestCommitted) / onDemand) * 100
@@ -873,7 +893,7 @@ function renderMovementMatrix(rows) {
       <thead>
         <tr>
           <th>GPU</th>
-          <th>Avg</th>
+          <th>Index</th>
           <th>Rows</th>
           <th>Sources</th>
           ${LOOKBACKS.map((lookback) => `<th>${lookback.label}</th>`).join("")}
@@ -913,10 +933,10 @@ function renderTopMovers(rows) {
   $("#topMovers").innerHTML = rows.length ? rows.map((row) => `<div class="mover-row ${changeClass(row.deltaPercent)}">
     <div>
       <strong>${escapeHtml(row.gpuModel)}</strong>
-      <span>${escapeHtml(row.provider)} · ${escapeHtml(row.region)}</span>
+      <span>Provider-balanced index · ${row.providerCount} providers</span>
     </div>
     <div class="mover-rate">
-      <span>${priceText(row.previous.pricePerGpuHour)} -> ${priceText(row.pricePerGpuHour)}</span>
+      <span>${priceText(row.previousPrice)} -> ${priceText(row.pricePerGpuHour)}</span>
       <strong>${percent(row.deltaPercent)}</strong>
     </div>
   </div>`).join("") : `<div class="empty compact-empty">No matched changes yet for the current filter set.</div>`;
@@ -929,7 +949,7 @@ function renderCheapestRegions(rows) {
       ${row.picks.map((pick) => `<span>
         <b>${escapeHtml(pick.region)}</b>
         ${priceText(pick.pricePerGpuHour)}
-        <small>${escapeHtml(pick.provider)}</small>
+        <small>${pick.providerCount} provider${pick.providerCount === 1 ? "" : "s"}</small>
       </span>`).join("")}
     </div>
   </div>`).join("") : `<div class="empty compact-empty">No cheapest-region view available for these filters.</div>`;

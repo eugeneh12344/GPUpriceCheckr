@@ -154,6 +154,7 @@ export function listReportRates(generatedAt = new Date()) {
       FROM rates
       WHERE price_per_gpu_hour > 0
         AND commitment = 'on-demand'
+        AND source_kind != 'benchmark-seed'
         AND observed_at >= ?
     ), baseline AS (
       SELECT ${DASHBOARD_RATE_SELECT}
@@ -166,6 +167,7 @@ export function listReportRates(generatedAt = new Date()) {
         FROM rates
         WHERE price_per_gpu_hour > 0
           AND commitment = 'on-demand'
+          AND source_kind != 'benchmark-seed'
           AND observed_at < ?
       )
       WHERE rank = 1
@@ -225,25 +227,63 @@ function dashboardChartAggregateRows(generatedAt, commitment = "on-demand", buck
     : "substr(observed_at, 1, 7) || '-01T00:00:00.000Z'";
 
   return db.prepare(`
+    WITH source AS (
+      SELECT
+        ${observedBucket} AS observedAt,
+        provider,
+        provider_type AS providerType,
+        gpu_model AS gpuModel,
+        region,
+        price_per_gpu_hour AS pricePerGpuHour,
+        source_url AS sourceUrl
+      FROM rates
+      WHERE commitment = ?
+        AND observed_at >= ?
+        AND price_per_gpu_hour > 0
+        AND source_kind != 'benchmark-seed'
+    ), ranked AS (
+      SELECT *,
+             ROW_NUMBER() OVER (
+               PARTITION BY observedAt, provider, providerType, gpuModel
+               ORDER BY pricePerGpuHour
+             ) AS priceRank,
+             COUNT(*) OVER (
+               PARTITION BY observedAt, provider, providerType, gpuModel
+             ) AS priceCount
+      FROM source
+    ), provider_medians AS (
+      SELECT observedAt, provider, providerType, gpuModel,
+             AVG(pricePerGpuHour) AS pricePerGpuHour
+      FROM ranked
+      WHERE priceRank IN ((priceCount + 1) / 2, (priceCount + 2) / 2)
+      GROUP BY observedAt, provider, providerType, gpuModel
+    ), provider_stats AS (
+      SELECT observedAt, provider, providerType, gpuModel,
+             MIN(sourceUrl) AS sourceUrl,
+             COUNT(*) AS directObservationCount,
+             COUNT(DISTINCT region) AS regionCount
+      FROM source
+      GROUP BY observedAt, provider, providerType, gpuModel
+    )
     SELECT
-      ${observedBucket} AS observedAt,
-      provider,
-      provider_type AS providerType,
-      gpu_model AS gpuModel,
+      medians.observedAt,
+      medians.provider,
+      medians.providerType,
+      medians.gpuModel,
       '' AS gpuVariant,
       'dashboard aggregate' AS region,
       ? AS commitment,
-      AVG(price_per_gpu_hour) AS pricePerGpuHour,
+      medians.pricePerGpuHour,
       'USD' AS currency,
-      MIN(source_url) AS sourceUrl,
+      stats.sourceUrl,
       'dashboard-aggregate' AS sourceKind,
-      COUNT(*) AS directObservationCount,
-      COUNT(DISTINCT region) AS regionCount
-    FROM rates
-    WHERE commitment = ? AND observed_at >= ? AND price_per_gpu_hour > 0
-    GROUP BY ${observedBucket}, provider, provider_type, gpu_model
-    ORDER BY observedAt, provider, gpuModel
-  `).all(commitment, commitment, cutoff);
+      stats.directObservationCount,
+      stats.regionCount
+    FROM provider_medians AS medians
+    JOIN provider_stats AS stats
+      USING (observedAt, provider, providerType, gpuModel)
+    ORDER BY medians.observedAt, medians.provider, medians.gpuModel
+  `).all(commitment, cutoff, commitment);
 }
 
 function dashboardSummaryPanelRows(generatedAt) {

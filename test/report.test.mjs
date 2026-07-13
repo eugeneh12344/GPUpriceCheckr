@@ -51,8 +51,26 @@ test("daily report digest summarizes movement and new rows", () => {
     results: [{ provider: "googleCloud", status: "success", records: 2 }],
     collected: scrapedRates.length
   });
-  assert.match(html, /Average Price By GPU/);
+  assert.match(html, /Provider-Balanced Index By GPU/);
   assert.match(html, /Regional Price Heatmap/);
   assert.match(html, /Price Trend/);
   assert.doesNotMatch(html, /Collected rates<\/h2>/);
+});
+
+test("daily email graphics use the provider-balanced index", () => {
+  const generatedAt = "2026-06-28T12:00:00.000Z";
+  const scrapedRates = [
+    baseRate({ provider: "AWS", region: "us-east-1", pricePerGpuHour: 4 }),
+    baseRate({ provider: "AWS", region: "us-west-2", pricePerGpuHour: 100 }),
+    baseRate({ provider: "Google Cloud", region: "europe-west1", pricePerGpuHour: 6 })
+  ];
+  const changes = __test.enrichChanges(scrapedRates, []);
+  const digest = __test.buildDigest({ scrapedRates, previousRates: [], changes, generatedAt });
+
+  const movement = digest.movementRows.find((row) => row.gpuModel === "H100");
+  assert.equal(movement.averagePrice, 29);
+  assert.notEqual(movement.averagePrice, (4 + 100 + 6) / 3);
+  assert.equal(digest.heatmapRows[0].cells["North America"].averagePrice, 52);
+  assert.equal(digest.heatmapRows[0].cells.Europe.averagePrice, 6);
+  assert.equal(digest.trend.series[0].values.at(-1), 29);
 });
