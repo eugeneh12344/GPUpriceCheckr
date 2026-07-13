@@ -59,6 +59,8 @@ For AWS spot movement, the same AWS credentials should also allow `ec2:DescribeS
 - `AWS_SPOT_INSTANCE_TYPES=p5.48xlarge,p5e.48xlarge`
 - `AWS_SPOT_HISTORY_DAYS=14`
 
+AWS catalog results are processed incrementally to keep memory bounded. `AWS_PRICE_PAGE_SIZE` controls the maximum products parsed at once and defaults to `50`. The daily cron waits for collection and email delivery to finish; `REPORT_TIMEOUT_MS` defaults to 50 minutes.
+
 The Ornn market index collector defaults to H100 SXM, H200, B200, A100 SXM4, and RTX 5090. Override with comma-separated Ornn GPU names using `ORNN_GPU_TYPES`.
 
 TensorDock is listed as an optional connector. It is skipped during default collection until `TENSORDOCK_MARKETPLACE_URL` points to a JSON feed with GPU labels and hourly prices.

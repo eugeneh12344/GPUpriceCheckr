@@ -19,9 +19,9 @@ const collectOnly = /^(1|true|yes)$/i.test(process.env.COLLECT_ONLY || "")
   || process.argv.includes("--collect-only");
 const pathname = collectOnly ? "/api/scrape" : "/api/daily-report";
 const body = {
-  ...(collectOnly ? {} : { async: true }),
   ...(providers.length ? { providers } : {})
 };
+const timeoutMs = Number(process.env.REPORT_TIMEOUT_MS || 50 * 60 * 1000);
 
 const response = await fetch(new URL(pathname, baseUrl), {
   method: "POST",
@@ -29,7 +29,8 @@ const response = await fetch(new URL(pathname, baseUrl), {
     authorization: `Bearer ${secret}`,
     "content-type": "application/json"
   },
-  body: JSON.stringify(body)
+  body: JSON.stringify(body),
+  signal: AbortSignal.timeout(timeoutMs)
 });
 const data = await response.json().catch(() => ({}));
 if (!response.ok) throw new Error(data.error || `Collection request failed with HTTP ${response.status}`);

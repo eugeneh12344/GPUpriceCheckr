@@ -143,6 +143,40 @@ const DASHBOARD_RATE_SELECT = `
   commitment, pricePerGpuHour, currency, sourceUrl, sourceKind
 `;
 
+export function listReportRates(generatedAt = new Date()) {
+  const reportTime = new Date(generatedAt);
+  if (Number.isNaN(reportTime.getTime())) throw new Error("generatedAt must be a valid date.");
+  const oldestComparison = new Date(reportTime.getTime() - 365 * 24 * 60 * 60 * 1000).toISOString();
+
+  return db.prepare(`
+    WITH recent AS (
+      SELECT ${DASHBOARD_RATE_COLUMNS}
+      FROM rates
+      WHERE price_per_gpu_hour > 0
+        AND commitment = 'on-demand'
+        AND observed_at >= ?
+    ), baseline AS (
+      SELECT ${DASHBOARD_RATE_SELECT}
+      FROM (
+        SELECT ${DASHBOARD_RATE_COLUMNS},
+               ROW_NUMBER() OVER (
+                 PARTITION BY provider, gpu_model, gpu_variant, region, commitment
+                 ORDER BY observed_at DESC, id DESC
+               ) AS rank
+        FROM rates
+        WHERE price_per_gpu_hour > 0
+          AND commitment = 'on-demand'
+          AND observed_at < ?
+      )
+      WHERE rank = 1
+    )
+    SELECT ${DASHBOARD_RATE_SELECT} FROM recent
+    UNION ALL
+    SELECT ${DASHBOARD_RATE_SELECT} FROM baseline
+    ORDER BY observedAt, provider, gpuModel, pricePerGpuHour
+  `).all(oldestComparison, oldestComparison);
+}
+
 function dashboardExactRows(whereClause = "", values = [], rankLimit = 1) {
   const validWhereClause = whereClause
     ? `${whereClause} AND price_per_gpu_hour > 0`

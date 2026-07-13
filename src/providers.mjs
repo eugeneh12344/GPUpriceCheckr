@@ -916,9 +916,10 @@ async function awsRegions() {
   }
 }
 
-async function awsProductsForRegion(region) {
-  const priceList = [];
+async function awsRatesForRegion(region, observedAt) {
+  const rates = [];
   let nextToken;
+  const pageSize = Math.max(1, Math.min(100, Number(process.env.AWS_PRICE_PAGE_SIZE || 50)));
   const filters = [
     ["productFamily", "Compute Instance"],
     ["regionCode", region],
@@ -932,15 +933,17 @@ async function awsProductsForRegion(region) {
     const data = await awsPricingRequest("GetProducts", {
       ServiceCode: "AmazonEC2",
       FormatVersion: "aws_v1",
-      MaxResults: 100,
+      MaxResults: pageSize,
       Filters: filters,
       ...(nextToken ? { NextToken: nextToken } : {})
     });
-    priceList.push(...(data.PriceList || []).map((item) => JSON.parse(item)));
+    for (const item of data.PriceList || []) {
+      rates.push(...ratesFromAwsProduct(JSON.parse(item), observedAt));
+    }
     nextToken = data.NextToken;
   } while (nextToken);
 
-  return priceList;
+  return rates;
 }
 
 function gpuInfoFromAwsAttributes(attributes = {}) {
@@ -1049,8 +1052,7 @@ async function scrapeAws(observedAt) {
   const regions = await awsRegions();
   const results = [];
   for (const region of regions) {
-    const products = await awsProductsForRegion(region);
-    for (const product of products) results.push(...ratesFromAwsProduct(product, observedAt));
+    results.push(...await awsRatesForRegion(region, observedAt));
   }
   try {
     results.push(...await scrapeAwsSpotHistory());

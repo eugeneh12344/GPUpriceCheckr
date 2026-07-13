@@ -1,5 +1,5 @@
 import { collectProviders, summarizeCollection } from "./collection.mjs";
-import { listRates } from "./db.mjs";
+import { listReportRates } from "./db.mjs";
 import { sendEmail } from "./email.mjs";
 import { defaultProviderIds } from "./providers.mjs";
 
@@ -471,15 +471,15 @@ function renderText({ digest, failures, generatedAt, collected }) {
 }
 
 export async function runDailyReport(options = {}) {
+  const generatedAt = new Date().toISOString();
   const providerIds = options.providers?.length
     ? options.providers
     : defaultProviderIds();
-  const before = listRates();
+  const before = listReportRates(generatedAt);
   const results = await collectProviders(providerIds);
   const scrapedRates = results.flatMap((result) => result.rates);
   const changes = enrichChanges(scrapedRates, before);
   const failures = results.filter((result) => result.status === "failed");
-  const generatedAt = new Date().toISOString();
   const digest = buildDigest({ scrapedRates, previousRates: before, changes, generatedAt });
   const subject = `GPU rates: ${digest.movementRows.length} GPUs, ${scrapedRates.length} rows collected, ${failures.length} failures`;
   const text = renderText({ digest, failures, generatedAt, collected: scrapedRates.length });
