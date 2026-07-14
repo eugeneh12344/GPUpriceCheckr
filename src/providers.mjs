@@ -895,7 +895,7 @@ async function scrapeAwsSpotHistory() {
       });
       params.set("ProductDescriptions.1", "Linux/UNIX");
       instanceTypes.forEach((instanceType, index) => {
-        params.set(`InstanceTypes.${index + 1}`, instanceType);
+        params.set(`InstanceType.${index + 1}`, instanceType);
       });
       if (nextToken) params.set("NextToken", nextToken);
       const xml = await awsEc2QueryRequest(region, params);

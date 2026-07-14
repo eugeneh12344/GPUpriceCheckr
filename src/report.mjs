@@ -496,7 +496,12 @@ export async function runDailyReport(options = {}) {
     results: summarizeCollection(results),
     collected: scrapedRates.length
   });
-  const email = await sendEmail({ subject, text, html });
+  const email = await sendEmail({
+    subject,
+    text,
+    html,
+    idempotencyKey: `gpu-rate-daily-${generatedAt.slice(0, 10)}`
+  });
 
   return {
     generatedAt,
