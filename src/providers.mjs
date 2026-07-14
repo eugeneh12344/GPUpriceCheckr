@@ -893,7 +893,7 @@ async function scrapeAwsSpotHistory() {
         EndTime: endTime,
         MaxResults: "1000"
       });
-      params.set("ProductDescriptions.1", "Linux/UNIX");
+      params.set("ProductDescription.1", "Linux/UNIX");
       instanceTypes.forEach((instanceType, index) => {
         params.set(`InstanceType.${index + 1}`, instanceType);
       });
