@@ -85,21 +85,6 @@ function latestRateMap(rates, cutoff = Infinity) {
   return latest;
 }
 
-function matchedComparison(currentRows, allRates, cutoff) {
-  const previousByKey = latestRateMap(allRates, cutoff);
-  const pairs = currentRows
-    .map((row) => ({ current: row, previous: previousByKey.get(rateKey(row)) }))
-    .filter((pair) => pair.previous);
-  if (!pairs.length) return null;
-  return {
-    change: pctChange(
-      providerBalancedPrice(pairs.map((pair) => pair.current)),
-      providerBalancedPrice(pairs.map((pair) => pair.previous))
-    ),
-    matched: pairs.length
-  };
-}
-
 function regionGroup(region = "") {
   const value = region.toLowerCase();
   if (value === "global" || value === "north america") return value === "global" ? "Global / Other" : "North America";
@@ -184,8 +169,23 @@ function directIndexObservations(rates) {
   );
 }
 
-function movementRows(currentRows, allRates, generatedAt, indexRows = []) {
-  const generatedTime = generatedAt.getTime();
+function indexComparison(currentRow, indexRows, lookbackDays) {
+  if (!currentRow) return null;
+  const cutoff = observedTime(currentRow) - lookbackDays * DAY_MS;
+  const previousRow = indexRows
+    .filter((row) => row.gpuModel === currentRow.gpuModel && observedTime(row) <= cutoff)
+    .toSorted((a, b) => observedTime(b) - observedTime(a))[0];
+  if (!previousRow) return null;
+  return {
+    change: pctChange(priceValue(currentRow), priceValue(previousRow)),
+    matched: Math.min(
+      Number(currentRow.directObservationCount || 1),
+      Number(previousRow.directObservationCount || 1)
+    )
+  };
+}
+
+function movementRows(currentRows, indexRows = []) {
   const currentIndexByModel = new Map(latestByModel(indexRows).map((row) => [row.gpuModel, row]));
   return [...groupBy(currentRows, (row) => row.gpuModel).entries()].map(([gpuModel, rows]) => {
     const indexRow = currentIndexByModel.get(gpuModel);
@@ -197,7 +197,7 @@ function movementRows(currentRows, allRates, generatedAt, indexRows = []) {
       regionCount: Number(indexRow?.regionCount || new Set(rows.map((row) => row.region)).size),
       comparisons: Object.fromEntries(LOOKBACKS.map((lookback) => [
         lookback.key,
-        matchedComparison(rows, allRates, generatedTime - lookback.days * DAY_MS)
+        indexComparison(indexRow, indexRows, lookback.days)
       ]))
     };
   }).toSorted((a, b) =>
@@ -431,10 +431,10 @@ export function buildDashboardSummary({ meta, rates, chartRates = rates, panelRa
     },
     chartRows,
     tableRows: latestByModel(fullChartRows).toSorted((a, b) => priceValue(b) - priceValue(a)),
-    movementRows: movementRows(currentRows, onDemandRows, generatedAt, fullChartRows),
+    movementRows: movementRows(currentRows, fullChartRows),
     spotChartRows,
     marketIndexRows,
-    spotMovementRows: movementRows(currentSpotRows, spotRows, generatedAt, fullSpotChartRows),
+    spotMovementRows: movementRows(currentSpotRows, fullSpotChartRows),
     heatmapRows: regionalHeatmapRows(currentRows),
     topMoverRows: topMoverRows(currentRows, onDemandRows),
     cheapestRows: cheapestRegionRows(currentRows),

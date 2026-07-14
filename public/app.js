@@ -382,17 +382,6 @@ function latestRateMap(rates, cutoff = Infinity) {
   return latest;
 }
 
-function matchedComparison(currentRows, allRates, cutoff) {
-  const previousByKey = latestRateMap(allRates, cutoff);
-  const pairs = currentRows
-    .map((row) => ({ current: row, previous: previousByKey.get(rateKey(row)) }))
-    .filter((pair) => pair.previous);
-  if (!pairs.length) return null;
-  const currentAverage = providerBalancedPrice(pairs.map((pair) => pair.current));
-  const previousAverage = providerBalancedPrice(pairs.map((pair) => pair.previous));
-  return { change: pctChange(currentAverage, previousAverage), matched: pairs.length };
-}
-
 function previousRateMap(currentRows, allRates) {
   const currentTimes = new Map(currentRows.map((row) => [rateKey(row), observedTime(row)]));
   const previous = new Map();
@@ -699,14 +688,29 @@ function buildVisualData() {
   return { comparableHistory, currentRows, indexRows, allCommitments, spotChartRows, marketIndexRows };
 }
 
-function movementRows(currentRows, allRates, indexRows = []) {
-  const generatedTime = Math.max(Date.now(), ...currentRows.map(observedTime).filter(Number.isFinite));
+function indexComparison(currentRow, indexRows, lookbackDays) {
+  if (!currentRow) return null;
+  const cutoff = observedTime(currentRow) - lookbackDays * DAY_MS;
+  const previousRow = indexRows
+    .filter((row) => row.gpuModel === currentRow.gpuModel && observedTime(row) <= cutoff)
+    .toSorted((a, b) => observedTime(b) - observedTime(a))[0];
+  if (!previousRow) return null;
+  return {
+    change: pctChange(priceValue(currentRow), priceValue(previousRow)),
+    matched: Math.min(
+      Number(currentRow.directObservationCount || 1),
+      Number(previousRow.directObservationCount || 1)
+    )
+  };
+}
+
+function movementRows(currentRows, indexRows = []) {
   const currentIndexByModel = new Map(latestByModel(indexRows).map((row) => [row.gpuModel, row]));
   return [...groupBy(currentRows, (row) => row.gpuModel).entries()].map(([gpuModel, rows]) => {
     const indexRow = currentIndexByModel.get(gpuModel);
     const comparisons = Object.fromEntries(LOOKBACKS.map((lookback) => [
       lookback.key,
-      matchedComparison(rows, allRates, generatedTime - lookback.days * DAY_MS)
+      indexComparison(indexRow, indexRows, lookback.days)
     ]));
     return {
       gpuModel,
@@ -1002,7 +1006,7 @@ function discountCandidateRows(rows) {
 function renderVisualizations() {
   const { comparableHistory, currentRows, indexRows, allCommitments, spotChartRows, marketIndexRows } = buildVisualData();
   renderHeroMetrics();
-  renderMovementMatrix(movementRows(currentRows, comparableHistory, indexRows));
+  renderMovementMatrix(movementRows(currentRows, indexRows));
   renderSpotChart(spotChartRows);
   renderMarketIndexChart(marketIndexRows);
   renderRegionHeatmap(regionalHeatmapRows(currentRows));

@@ -113,3 +113,19 @@ test("dashboard graphics balance providers before combining prices", () => {
   assert.equal(heatmap.cells["North America"].averagePrice, 52);
   assert.equal(heatmap.cells.Europe.averagePrice, 6);
 });
+
+test("daily movement is anchored to the latest indexed day, not dashboard generation time", () => {
+  const rates = [
+    rate({ observedAt: "2026-06-27T12:00:00.000Z", pricePerGpuHour: 5 }),
+    rate({ observedAt: "2026-06-28T12:00:00.000Z", pricePerGpuHour: 4 })
+  ];
+  const summary = buildDashboardSummary({
+    meta: { range: { count: rates.length }, gpus: ["H100"], regions: ["us-east-1"], providers: [{ provider: "AWS" }] },
+    rates,
+    generatedAt: new Date("2026-06-30T12:00:00.000Z")
+  });
+
+  const movement = summary.movementRows.find((row) => row.gpuModel === "H100");
+  assert.equal(movement.averagePrice, 4);
+  assert.equal(movement.comparisons.day.change, -20);
+});
