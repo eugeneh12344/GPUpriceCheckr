@@ -793,6 +793,41 @@ td a {
   line-height: 1;
 }
 
+.point-comparison {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 12px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.018);
+  border: 1px solid var(--soft-line);
+  border-radius: 4px;
+  font-size: 9px;
+}
+
+.point-comparison strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.muted-comparison {
+  display: block;
+}
+
+.dialog-note {
+  margin: -3px 0 0;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.contribution-table .delta {
+  display: inline-block;
+  min-width: 48px;
+  text-align: center;
+}
+
 .toast {
   position: fixed;
   right: 20px;
@@ -876,7 +911,8 @@ td a {
   .market-chart svg { min-height: 240px; height: 240px; }
   .ops-grid { grid-template-columns: 1fr; }
   .table-panel { grid-column: auto; }
-  .selected-point { grid-template-columns: 1fr; gap: 6px; }
+  .selected-point,
+  .point-comparison { grid-template-columns: 1fr; gap: 6px; }
 }
 
 @media (max-width: 480px) {

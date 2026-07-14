@@ -420,6 +420,7 @@ function directIndexObservations(rows = filteredDirectRates({ defaultCommitment:
       directObservationCount: group.rows,
       providerCount,
       regionCount: group.regions.size,
+      period: "day",
       commitment
     }];
   }).toSorted((a, b) =>
@@ -462,6 +463,7 @@ function directDailyIndexObservations(rows, commitment = "spot", aggregation = "
       billingType: commitment,
       directObservationCount: group.rows,
       providerCount: group.providerPrices.size,
+      period: "day",
       commitment
     }];
   }).toSorted((a, b) =>
@@ -500,13 +502,13 @@ function dayBounds(date) {
 }
 
 async function directObservationsFor(indexRow) {
-  const isDaily = indexRow.aggregation?.startsWith("daily-");
+  const isDaily = indexRow.period === "day" || indexRow.aggregation?.includes("daily-");
   const selectedPeriod = isDaily ? dayKey(indexRow.observedAt) : monthKey(indexRow.observedAt);
   const { from, to } = isDaily ? dayBounds(indexRow.observedAt) : monthBounds(indexRow.observedAt);
   const params = new URLSearchParams({ gpu: indexRow.gpuModel, from, to });
   const provider = $("#providerFilter").value;
   const region = $("#regionFilter").value;
-  const commitment = $("#commitmentFilter").value;
+  const commitment = indexRow.commitment || $("#commitmentFilter").value;
   if (provider !== "all") params.set("provider", provider);
   if (region !== "all") params.set("region", region);
   if (commitment !== "all") params.set("commitment", commitment);
@@ -525,15 +527,49 @@ function providerSummaryFor(rows) {
       provider: row.provider,
       providerType: row.providerType,
       observations: 0,
+      prices: [],
+      regions: new Set(),
       sourceKinds: new Set(),
+      sourceUrls: new Set(),
       latestObservation: row.observedAt
     };
     current.observations += 1;
+    current.prices.push(priceValue(row));
+    current.regions.add(row.region);
     current.sourceKinds.add(row.sourceKind);
+    current.sourceUrls.add(row.sourceUrl);
     if (new Date(row.observedAt) > new Date(current.latestObservation)) current.latestObservation = row.observedAt;
     providers.set(row.provider, current);
   }
-  return [...providers.values()].toSorted((a, b) => a.provider.localeCompare(b.provider));
+  return [...providers.values()].map((provider) => ({
+    ...provider,
+    medianPrice: median(provider.prices),
+    regionCount: provider.regions.size
+  })).toSorted((a, b) => a.provider.localeCompare(b.provider));
+}
+
+function pointPeriodLabel(indexRow) {
+  return indexRow.period === "day" || indexRow.aggregation?.includes("daily-") ? "day" : "month";
+}
+
+function pointDateLabel(indexRow) {
+  return pointPeriodLabel(indexRow) === "day" ? fullDate(indexRow.observedAt) : shortDate(indexRow.observedAt);
+}
+
+function providerComparisonRows(currentRows, previousRows = []) {
+  const current = new Map(providerSummaryFor(currentRows).map((row) => [row.provider, row]));
+  const previous = new Map(providerSummaryFor(previousRows).map((row) => [row.provider, row]));
+  return [...new Set([...current.keys(), ...previous.keys()])].toSorted().map((provider) => {
+    const currentRow = current.get(provider);
+    const previousRow = previous.get(provider);
+    return {
+      provider,
+      providerType: currentRow?.providerType || previousRow?.providerType || "provider",
+      current: currentRow,
+      previous: previousRow,
+      change: pctChange(currentRow?.medianPrice, previousRow?.medianPrice)
+    };
+  });
 }
 
 function sourceCard({ name, type, meta, href }) {
@@ -544,9 +580,10 @@ function sourceCard({ name, type, meta, href }) {
   </div>`;
 }
 
-async function showSourceDetails(indexRow) {
+async function showSourceDetails(indexRow, previousIndexRow = null) {
   const dialog = $("#sourceDialog");
-  $("#sourceDialogTitle").textContent = `${indexRow.gpuModel} · ${shortDate(indexRow.observedAt)}`;
+  const periodLabel = pointPeriodLabel(indexRow);
+  $("#sourceDialogTitle").textContent = `${indexRow.gpuModel} · ${pointDateLabel(indexRow)}`;
   const aggregateMeta = indexRow.directObservationCount
     ? `${priceText(indexRow.pricePerGpuHour)} / GPU-hour<br>${indexRow.directObservationCount} direct point${indexRow.directObservationCount === 1 ? "" : "s"} · ${indexRow.providerCount} provider${indexRow.providerCount === 1 ? "" : "s"} · ${indexRow.regionCount} region${indexRow.regionCount === 1 ? "" : "s"}`
     : `${priceText(indexRow.pricePerGpuHour)} / GPU-hour<br>${escapeHtml(aggregationText(indexRow.aggregation))}`;
@@ -558,18 +595,35 @@ async function showSourceDetails(indexRow) {
     meta: aggregateMeta
   });
 
-  const renderBody = (directRows, error) => {
-    const directProviders = directRows ? providerSummaryFor(directRows) : [];
-    const directSourceCards = directProviders.map((provider) => sourceCard({
-      name: provider.provider,
-      type: provider.providerType,
-      meta: `${provider.observations} direct data point${provider.observations === 1 ? "" : "s"}<br>${escapeHtml([...provider.sourceKinds].join(", "))} · latest ${shortDate(provider.latestObservation)}`
+  const renderBody = (directRows, previousRows, error) => {
+    const comparisons = directRows ? providerComparisonRows(directRows, previousRows) : [];
+    const directSourceCards = comparisons.map(({ provider, providerType, current, previous, change }) => sourceCard({
+      name: provider,
+      type: providerType,
+      meta: current
+        ? `${priceText(current.medianPrice)} provider median · ${current.observations} row${current.observations === 1 ? "" : "s"} · ${current.regionCount} region${current.regionCount === 1 ? "" : "s"}<br>${previous ? `${formatMaybe(change, percent)} vs ${pointDateLabel(previousIndexRow)}` : "New in selected day"}`
+        : `Not present on selected day<br>Was ${priceText(previous.medianPrice)} on ${pointDateLabel(previousIndexRow)}`,
+      href: [...(current?.sourceUrls || previous?.sourceUrls || [])][0]
     })).join("");
     const sourceList = error
       ? `<div class="empty-source">${escapeHtml(error.message)}</div>`
       : directRows == null
         ? `<div class="empty-source">Loading direct provider rows...</div>`
-        : directSourceCards || `<div class="empty-source">No direct provider observations have been collected for this GPU and month yet.</div>`;
+        : directSourceCards || `<div class="empty-source">No direct provider observations have been collected for this GPU and ${periodLabel}.</div>`;
+
+    const comparisonTable = directRows == null || error ? "" : comparisons.length ? `<div class="table-wrap contribution-table">
+      <table>
+        <thead><tr><th>Provider input</th><th>Selected ${periodLabel}</th><th>Prior point</th><th>Provider change</th><th>Rows</th><th>Regions</th></tr></thead>
+        <tbody>${comparisons.map(({ provider, current, previous, change }) => `<tr>
+          <td><strong>${escapeHtml(provider)}</strong></td>
+          <td class="rate">${current ? priceText(current.medianPrice) : "Not present"}</td>
+          <td class="rate">${previous ? priceText(previous.medianPrice) : "Not present"}</td>
+          <td><span class="delta ${changeClass(change)}">${current && previous ? formatMaybe(change, percent) : current ? "Added" : "Removed"}</span></td>
+          <td>${current?.observations || "—"}</td>
+          <td>${current?.regionCount || "—"}</td>
+        </tr>`).join("")}</tbody>
+      </table>
+    </div>` : "";
 
     const directTable = error
       ? `<div class="empty-source">${escapeHtml(error.message)}</div>`
@@ -589,7 +643,17 @@ async function showSourceDetails(indexRow) {
               <td><a href="${escapeHtml(row.sourceUrl)}" target="_blank" rel="noopener">Open</a></td>
             </tr>`).join("")}</tbody>
           </table>
-        </div>` : `<div class="empty-source">Daily collection or archive imports will add direct provider rows for this month.</div>`;
+        </div>` : `<div class="empty-source">Collection or archive imports will add direct provider rows for this ${periodLabel}.</div>`;
+
+    const indexChange = previousIndexRow
+      ? pctChange(priceValue(indexRow), priceValue(previousIndexRow))
+      : null;
+    const previousPoint = previousIndexRow ? `
+      <div class="point-comparison">
+        <span>Prior plotted point · ${pointDateLabel(previousIndexRow)}</span>
+        <strong>${priceText(previousIndexRow.pricePerGpuHour)}</strong>
+        <span class="delta ${changeClass(indexChange)}">${formatMaybe(indexChange, percent)}</span>
+      </div>` : `<div class="point-comparison muted-comparison">No earlier plotted point in this series.</div>`;
 
     return `
       <section class="dialog-section">
@@ -597,28 +661,35 @@ async function showSourceDetails(indexRow) {
         <div class="selected-point">
           <span>${escapeHtml(indexRow.gpuModel)}</span>
           <strong>${priceText(indexRow.pricePerGpuHour)}</strong>
-          <span>${fullDate(indexRow.observedAt)}</span>
+          <span>${pointDateLabel(indexRow)}</span>
         </div>
+        ${previousPoint}
         <div class="sources compact">${aggregateCard}</div>
       </section>
       <section class="dialog-section">
-        <h3>Direct sources for the same GPU and index period</h3>
+        <h3>Provider inputs for this ${periodLabel}</h3>
+        <p class="dialog-note">The index is the median of these provider-level medians. Only rows observed on the selected ${periodLabel} are included.</p>
         <div class="sources compact">${sourceList}</div>
+        ${comparisonTable}
       </section>
       <section class="dialog-section">
-        <h3>Direct data points</h3>
+        <h3>Exact rows used for ${pointDateLabel(indexRow)}</h3>
         ${directTable}
       </section>
     `;
   };
 
-  $("#sourceDialogBody").innerHTML = renderBody(null);
+  $("#sourceDialogBody").innerHTML = renderBody(null, null);
   if (typeof dialog.showModal === "function") dialog.showModal();
   else dialog.setAttribute("open", "");
   try {
-    $("#sourceDialogBody").innerHTML = renderBody(await directObservationsFor(indexRow));
+    const [directRows, previousRows] = await Promise.all([
+      directObservationsFor(indexRow),
+      previousIndexRow ? directObservationsFor(previousIndexRow) : Promise.resolve([])
+    ]);
+    $("#sourceDialogBody").innerHTML = renderBody(directRows, previousRows);
   } catch (error) {
-    $("#sourceDialogBody").innerHTML = renderBody([], error);
+    $("#sourceDialogBody").innerHTML = renderBody([], [], error);
   }
 }
 
@@ -860,9 +931,10 @@ function renderLineChart(rows, chart, legend, emptyMessage) {
     const path = modelRows.map((row, pointIndex) =>
       `${pointIndex ? "L" : "M"} ${x(new Date(row.observedAt).getTime())} ${y(priceValue(row))}`
     ).join(" ");
-    const points = modelRows.map((row) => `
+    const points = modelRows.map((row, pointIndex) => `
       <circle class="point" cx="${x(new Date(row.observedAt).getTime())}" cy="${y(priceValue(row))}" r="3.4"
-        fill="${color}" data-rate='${JSON.stringify(row).replaceAll("'", "&#39;")}' />`).join("");
+        fill="${color}" data-rate='${JSON.stringify(row).replaceAll("'", "&#39;")}'
+        data-previous-rate='${JSON.stringify(modelRows[pointIndex - 1] || null).replaceAll("'", "&#39;")}' />`).join("");
     return `<path class="series-line" d="${path}" stroke="${color}" />${points}`;
   }).join("");
 
@@ -881,8 +953,8 @@ function attachTooltips(root = document) {
       tooltip.className = "tooltip";
       tooltip.innerHTML = `<strong>${row.gpuModel}</strong>
         ${priceText(row.pricePerGpuHour)} / GPU-hour<br>
-        ${fullDate(row.observedAt)}<br>
-        <span style="color:#aeb6af">${escapeHtml(aggregationText(row.aggregation))}</span>`;
+        ${pointDateLabel(row)}<br>
+        <span style="color:#aeb6af">${row.period === "day" ? "Daily provider-balanced index · click to inspect inputs" : escapeHtml(aggregationText(row.aggregation))}</span>`;
       document.body.appendChild(tooltip);
       point.tooltip = tooltip;
     });
@@ -897,7 +969,8 @@ function attachTooltips(root = document) {
     });
     point.addEventListener("click", () => {
       const row = JSON.parse(point.dataset.rate);
-      showSourceDetails(row);
+      const previousRow = JSON.parse(point.dataset.previousRate || "null");
+      showSourceDetails(row, previousRow);
     });
   });
 }

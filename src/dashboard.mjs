@@ -253,19 +253,25 @@ export function buildDashboardSummary({ meta, rates, chartRates = rates, panelRa
     observedAt: row.observedAt,
     gpuModel: row.gpuModel,
     group: row.group,
-    pricePerGpuHour: row.pricePerGpuHour
+    pricePerGpuHour: row.pricePerGpuHour,
+    period: "day",
+    commitment: "on-demand"
   }));
   const spotChartRows = fullSpotChartRows.map((row) => ({
     observedAt: row.observedAt,
     gpuModel: row.gpuModel,
     group: row.group,
-    pricePerGpuHour: row.pricePerGpuHour
+    pricePerGpuHour: row.pricePerGpuHour,
+    period: "day",
+    commitment: "spot"
   }));
   const marketIndexRows = fullMarketIndexRows.map((row) => ({
     observedAt: row.observedAt,
     gpuModel: row.gpuModel,
     group: row.group,
-    pricePerGpuHour: row.pricePerGpuHour
+    pricePerGpuHour: row.pricePerGpuHour,
+    period: "day",
+    commitment: "market-index"
   }));
   return {
     freshness: { latestPricePull: latestPriceTimestamp(panelRates.length ? panelRates : rates) },

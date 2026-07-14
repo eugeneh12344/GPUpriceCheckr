@@ -51,6 +51,9 @@ test("dashboard summary keeps first-load chart payload slim", () => {
   assert.equal(summary.chartRows.some((row) => row.gpuModel === "A100"), false);
   assert.equal(summary.chartRows.some((row) => "sourceName" in row), false);
   assert.equal(summary.chartRows.some((row) => "aggregation" in row), false);
+  assert.ok(summary.chartRows.every((row) => row.period === "day" && row.commitment === "on-demand"));
+  assert.ok(summary.spotChartRows.every((row) => row.period === "day" && row.commitment === "spot"));
+  assert.ok(summary.marketIndexRows.every((row) => row.period === "day" && row.commitment === "market-index"));
   assert.equal("heatmapRows" in summary, false);
   assert.equal("topMoverRows" in summary, false);
   assert.equal("cheapestRows" in summary, false);
