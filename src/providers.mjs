@@ -922,12 +922,16 @@ async function awsAttributeValues(attributeName) {
   return values;
 }
 
+function isAwsRegionCode(value = "") {
+  return /^[a-z]{2}(?:-[a-z]+)+-\d+$/.test(value);
+}
+
 async function awsRegions() {
   const configured = configuredRegions("AWS_REGIONS");
   if (configured) return [...configured];
   try {
     const regions = await awsAttributeValues("regionCode");
-    return regions.filter((region) => /^[a-z]{2}-/.test(region)).toSorted();
+    return regions.filter(isAwsRegionCode).toSorted();
   } catch {
     return DEFAULT_AWS_REGIONS;
   }
@@ -1317,6 +1321,7 @@ export const __test = {
   ratesFromAzureRow,
   ratesFromAwsProduct,
   ratesFromAwsSpotHistoryXml,
+  isAwsRegionCode,
   ratesFromGoogleSku,
   ratesFromRunpodGpu,
   ratesFromTensorDockRow,

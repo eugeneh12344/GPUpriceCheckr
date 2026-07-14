@@ -73,6 +73,13 @@ test("AWS products emit on-demand and reserved per-GPU rates", () => {
   assert.equal(rates.find((rate) => rate.commitment === "reserved-1-year-no-upfront").pricePerGpuHour, 8);
 });
 
+test("AWS region discovery excludes Local and Wavelength Zones", () => {
+  assert.equal(__test.isAwsRegionCode("us-east-1"), true);
+  assert.equal(__test.isAwsRegionCode("us-gov-west-1"), true);
+  assert.equal(__test.isAwsRegionCode("ap-northeast-1-tpe-1"), false);
+  assert.equal(__test.isAwsRegionCode("us-east-1-wl1-bos-wlz-1"), false);
+});
+
 test("AWS spot history rows normalize instance spot prices to per-GPU hourly rates", () => {
   const rates = __test.ratesFromAwsSpotHistoryXml(`
     <DescribeSpotPriceHistoryResponse>

@@ -61,7 +61,7 @@ For AWS spot movement, the same AWS credentials should also allow `ec2:DescribeS
 
 AWS catalog results are processed incrementally to keep memory bounded. `AWS_PRICE_PAGE_SIZE` controls the maximum products parsed at once and defaults to `50`. The daily cron starts a tracked report job and polls it with short requests until collection and email delivery finish; `REPORT_TIMEOUT_MS` defaults to 50 minutes.
 
-AWS regions are collected with bounded concurrency so a full catalog refresh does not serialize every region. `AWS_REGION_CONCURRENCY` defaults to `4` and can be lowered if the AWS Pricing API throttles the account. Email delivery is capped by `EMAIL_TIMEOUT_MS`, which defaults to 30 seconds.
+AWS regions are collected with bounded concurrency so a full catalog refresh does not serialize every region. Region discovery excludes Local and Wavelength Zones, whose catalog codes otherwise look like regions but do not return the regional GPU price set. `AWS_REGION_CONCURRENCY` defaults to `4` and can be lowered if the AWS Pricing API throttles the account. Email delivery is capped by `EMAIL_TIMEOUT_MS`, which defaults to 30 seconds.
 
 The Ornn market index collector defaults to H100 SXM, H200, B200, A100 SXM4, and RTX 5090. Override with comma-separated Ornn GPU names using `ORNN_GPU_TYPES`.
 
