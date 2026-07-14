@@ -97,6 +97,8 @@ multi-GPU trend charts instead of listing every collected observation.
 
 Every cross-provider price shown in site graphics and email digests uses the same provider-balanced index: the median price is calculated within each provider first, then the median is calculated across providers. This prevents providers with more regions or SKUs from receiving extra weight.
 
+AWS on-demand catalog gaps of up to three days are backfilled only when matching observations on both sides of the gap have the same product, region, price, currency, label, and source URL. These rows are stored as `confirmed-backfill` so point inspection remains explicit and auditable. Unbounded gaps and gaps containing a price change are never filled.
+
 ## API
 
 - `GET /api/meta` — source, GPU, region, commitment, collection-run, and date-range metadata.

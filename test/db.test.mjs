@@ -5,7 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "gpu-rate-index-test-"));
-const { dashboardSummaryData, listReportRates, saveRates } = await import("../src/db.mjs");
+const {
+  backfillConfirmedAwsCatalogGaps,
+  dashboardSummaryData,
+  listRates,
+  listReportRates,
+  saveRates
+} = await import("../src/db.mjs");
 
 const reportRate = (observedAt, commitment = "on-demand") => ({
   observedAt,
@@ -54,5 +60,40 @@ test("dashboard chart rows calculate provider medians before the cross-provider 
   assert.deepEqual(
     providerRows.map((row) => [row.provider, row.pricePerGpuHour]),
     [["Chart Provider A", 52], ["Chart Provider B", 6]]
+  );
+});
+
+test("AWS catalog gaps are backfilled only when surrounding prices confirm no change", () => {
+  const awsRate = (observedAt, pricePerGpuHour, region = "us-east-1") => ({
+    observedAt,
+    provider: "AWS",
+    providerType: "hyperscaler",
+    gpuModel: "B300",
+    gpuVariant: "p6-b300.48xlarge",
+    region,
+    commitment: "on-demand",
+    pricePerGpuHour,
+    currency: "USD",
+    sourceUrl: "https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/using-price-list-query-api.html",
+    sourceKind: "api",
+    rawLabel: "p6-b300.48xlarge"
+  });
+  saveRates([
+    awsRate("2030-07-11T12:00:00.000Z", 17.802),
+    awsRate("2030-07-14T12:00:00.000Z", 17.802),
+    awsRate("2030-07-11T12:00:00.000Z", 20, "us-west-2"),
+    awsRate("2030-07-14T12:00:00.000Z", 21, "us-west-2")
+  ]);
+
+  assert.equal(backfillConfirmedAwsCatalogGaps({ now: "2030-07-15T00:00:00.000Z" }), 2);
+  const backfills = listRates({ provider: "AWS", gpu: "B300" })
+    .filter((row) => row.sourceKind === "confirmed-backfill");
+
+  assert.deepEqual(
+    backfills.map((row) => [row.observedAt, row.region, row.pricePerGpuHour]),
+    [
+      ["2030-07-12T12:00:00.000Z", "us-east-1", 17.802],
+      ["2030-07-13T12:00:00.000Z", "us-east-1", 17.802]
+    ]
   );
 });

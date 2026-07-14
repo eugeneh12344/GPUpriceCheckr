@@ -7,6 +7,7 @@ import { dirname } from "node:path";
 import { brotliCompressSync, constants as zlibConstants, gzipSync } from "node:zlib";
 import {
   DATA_DIR,
+  backfillConfirmedAwsCatalogGaps,
   dashboardRates,
   dashboardSummaryData,
   finishRun,
@@ -28,7 +29,7 @@ const PUBLIC = join(ROOT, "public");
 const PORT = Number(process.env.PORT || 3000);
 const DASHBOARD_CACHE_MS = 5 * 60 * 1000;
 const DASHBOARD_CACHE_FILE = join(DATA_DIR, "dashboard-payload-cache.json");
-const DASHBOARD_CACHE_VERSION = 11;
+const DASHBOARD_CACHE_VERSION = 12;
 const BROTLI_OPTIONS = { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 4 } };
 const GZIP_OPTIONS = { level: 6 };
 let dashboardCache = null;
@@ -39,6 +40,8 @@ let dashboardRefreshGeneration = -1;
 let dailyReportJob = null;
 markInterruptedRuns();
 seedBenchmarks();
+const confirmedCatalogBackfills = backfillConfirmedAwsCatalogGaps();
+if (confirmedCatalogBackfills) console.log(JSON.stringify({ confirmedCatalogBackfills }));
 
 const MIME = {
   ".html": "text/html; charset=utf-8",

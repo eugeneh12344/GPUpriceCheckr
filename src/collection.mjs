@@ -1,4 +1,4 @@
-import { finishRun, saveRates, startRun } from "./db.mjs";
+import { backfillConfirmedAwsCatalogGaps, finishRun, saveRates, startRun } from "./db.mjs";
 import { defaultProviderIds, scrapeProvider } from "./providers.mjs";
 
 function validRateRows(rates) {
@@ -39,6 +39,7 @@ export async function collectProviders(providerIds = defaultProviderIds()) {
       results.push({ provider: id, status: "failed", records: 0, message: error.message, rates: [] });
     }
   }
+  backfillConfirmedAwsCatalogGaps();
   return results;
 }
 

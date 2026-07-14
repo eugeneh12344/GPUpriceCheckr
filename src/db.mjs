@@ -94,6 +94,83 @@ export function saveRates(rates) {
   return validRates.length;
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function utcDay(value) {
+  return String(value).slice(0, 10);
+}
+
+function catalogRateKey(rate) {
+  return [
+    rate.provider,
+    rate.gpuModel,
+    rate.gpuVariant || "",
+    rate.region || "global",
+    rate.commitment || "on-demand"
+  ].join("|");
+}
+
+export function confirmedCatalogGapRows(rows, { maxMissingDays = 3 } = {}) {
+  const dailyLatest = new Map();
+  for (const row of rows) {
+    const key = `${catalogRateKey(row)}|${utcDay(row.observedAt)}`;
+    const current = dailyLatest.get(key);
+    if (!current || new Date(row.observedAt) > new Date(current.observedAt)) dailyLatest.set(key, row);
+  }
+
+  const groups = new Map();
+  for (const row of dailyLatest.values()) {
+    const key = catalogRateKey(row);
+    const group = groups.get(key) || [];
+    group.push(row);
+    groups.set(key, group);
+  }
+
+  const backfills = [];
+  for (const group of groups.values()) {
+    group.sort((a, b) => new Date(a.observedAt) - new Date(b.observedAt));
+    for (let index = 1; index < group.length; index += 1) {
+      const previous = group[index - 1];
+      const current = group[index];
+      const previousDay = utcDay(previous.observedAt);
+      const currentDay = utcDay(current.observedAt);
+      const gapDays = Math.round((new Date(`${currentDay}T00:00:00.000Z`) - new Date(`${previousDay}T00:00:00.000Z`)) / DAY_MS) - 1;
+      const confirmedUnchanged =
+        gapDays > 0 && gapDays <= maxMissingDays &&
+        Number(previous.pricePerGpuHour) === Number(current.pricePerGpuHour) &&
+        previous.currency === current.currency &&
+        previous.sourceUrl === current.sourceUrl &&
+        previous.rawLabel === current.rawLabel;
+      if (!confirmedUnchanged) continue;
+
+      for (let offset = 1; offset <= gapDays; offset += 1) {
+        const observedAt = new Date(new Date(`${previousDay}T12:00:00.000Z`).getTime() + offset * DAY_MS).toISOString();
+        backfills.push({
+          ...previous,
+          id: undefined,
+          observedAt,
+          sourceKind: "confirmed-backfill",
+          rawLabel: `${previous.rawLabel} · confirmed unchanged between ${previousDay} and ${currentDay}`
+        });
+      }
+    }
+  }
+  return backfills;
+}
+
+export function backfillConfirmedAwsCatalogGaps({ now = new Date(), lookbackDays = 90, maxMissingDays = 3 } = {}) {
+  const cutoff = new Date(new Date(now).getTime() - lookbackDays * DAY_MS).toISOString();
+  const rows = listRates({ provider: "AWS", commitment: "on-demand", from: cutoff });
+  const existing = new Set(rows
+    .filter((row) => row.sourceKind === "confirmed-backfill")
+    .map((row) => `${catalogRateKey(row)}|${utcDay(row.observedAt)}`));
+  const backfills = confirmedCatalogGapRows(
+    rows.filter((row) => row.sourceKind === "api"),
+    { maxMissingDays }
+  ).filter((row) => !existing.has(`${catalogRateKey(row)}|${utcDay(row.observedAt)}`));
+  return saveRates(backfills);
+}
+
 export function listRates(filters = {}) {
   const clauses = [];
   const values = [];
