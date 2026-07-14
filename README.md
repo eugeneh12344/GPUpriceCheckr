@@ -61,6 +61,8 @@ For AWS spot movement, the same AWS credentials should also allow `ec2:DescribeS
 
 AWS catalog results are processed incrementally to keep memory bounded. `AWS_PRICE_PAGE_SIZE` controls the maximum products parsed at once and defaults to `50`. The daily cron waits for collection and email delivery to finish; `REPORT_TIMEOUT_MS` defaults to 50 minutes.
 
+AWS regions are collected with bounded concurrency so a full catalog refresh does not serialize every region. `AWS_REGION_CONCURRENCY` defaults to `4` and can be lowered if the AWS Pricing API throttles the account. Email delivery is capped by `EMAIL_TIMEOUT_MS`, which defaults to 30 seconds.
+
 The Ornn market index collector defaults to H100 SXM, H200, B200, A100 SXM4, and RTX 5090. Override with comma-separated Ornn GPU names using `ORNN_GPU_TYPES`.
 
 TensorDock is listed as an optional connector. It is skipped during default collection until `TENSORDOCK_MARKETPLACE_URL` points to a JSON feed with GPU labels and hourly prices.

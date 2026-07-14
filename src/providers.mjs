@@ -331,6 +331,23 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function mapWithConcurrency(values, concurrency, mapper) {
+  const results = new Array(values.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < values.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(values[index], index);
+    }
+  }
+
+  const workerCount = Math.max(1, Math.min(values.length, concurrency));
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results;
+}
+
 function base64Url(value) {
   return Buffer.from(typeof value === "string" ? value : JSON.stringify(value))
     .toString("base64")
@@ -1050,10 +1067,16 @@ function ratesFromAwsProduct(product, observedAt) {
 
 async function scrapeAws(observedAt) {
   const regions = await awsRegions();
-  const results = [];
-  for (const region of regions) {
-    results.push(...await awsRatesForRegion(region, observedAt));
-  }
+  const configuredConcurrency = Number(process.env.AWS_REGION_CONCURRENCY || 4);
+  const concurrency = Number.isFinite(configuredConcurrency)
+    ? Math.max(1, Math.min(8, Math.floor(configuredConcurrency)))
+    : 4;
+  const regionalRates = await mapWithConcurrency(regions, concurrency, async (region) => {
+    const rates = await awsRatesForRegion(region, observedAt);
+    console.log(JSON.stringify({ provider: "aws", region, records: rates.length }));
+    return rates;
+  });
+  const results = regionalRates.flat();
   try {
     results.push(...await scrapeAwsSpotHistory());
   } catch (error) {

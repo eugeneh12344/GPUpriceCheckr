@@ -10,6 +10,7 @@ export async function sendEmail({ subject, text, html }) {
     };
   }
 
+  const timeoutMs = Number(process.env.EMAIL_TIMEOUT_MS || 30_000);
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -22,7 +23,8 @@ export async function sendEmail({ subject, text, html }) {
       subject,
       text,
       html
-    })
+    }),
+    signal: AbortSignal.timeout(timeoutMs)
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.message || `Resend ${response.status}`);
