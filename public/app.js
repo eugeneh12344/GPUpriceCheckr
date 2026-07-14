@@ -10,7 +10,7 @@ const state = {
   indexPromise: null,
   dashboardApiMs: null,
   months: 24,
-  colors: ["#b7ff2a", "#7fb3ff", "#f7b041", "#53d769", "#b8c3d1", "#a78bfa", "#ff6b8a", "#7dd3fc", "#f2f4f8", "#34d399"]
+  colors: ["#a7ed18", "#448dff", "#9459df", "#27c8ca", "#f2d20a", "#aab4ba", "#ff647f", "#62d38b", "#f0f3f5", "#f0a33a"]
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -49,7 +49,6 @@ const GROUPS = {
 };
 const DEFAULT_GPU_COHORT = "frontier";
 const DEFAULT_GPU_MODELS = ["H100", "H200", "GH200", "B200", "B300", "GB200", "GB300"];
-const groupLabels = { modern: "Modern", "last-released": "Latest", legacy: "Legacy", other: "Other" };
 const DAY_MS = 24 * 60 * 60 * 1000;
 const LOOKBACKS = [
   { key: "day", label: "1D", days: 1 },
@@ -58,7 +57,6 @@ const LOOKBACKS = [
   { key: "quarter", label: "Q", days: 90 },
   { key: "year", label: "Y", days: 365 }
 ];
-const REGION_GROUPS = ["North America", "Europe", "Asia Pacific", "Middle East & Africa", "South America", "Global / Other"];
 const GPU_PRIORITY = ["H100", "H200", "B200", "B300", "GB200", "GB300", "GH200", "MI300X", "A100", "L40S", "L40", "L4", "A10", "RTX 5090", "RTX 4090", "T4", "V100", "P100"];
 
 function groupForGpu(gpuModel) {
@@ -216,16 +214,11 @@ function showLoadError(error) {
   $("#freshness").textContent = "Dashboard data unavailable";
   $("#chart").innerHTML = `<div class="empty">Dashboard data did not load. ${escapeHtml(error.message)}</div>`;
   $("#movementTable").innerHTML = `<div class="empty compact-empty">No data loaded.</div>`;
-  $("#regionHeatmap").innerHTML = `<div class="empty compact-empty">No data loaded.</div>`;
   $("#spotChart").innerHTML = `<div class="empty compact-empty">No data loaded.</div>`;
   $("#spotLegend").innerHTML = "";
   $("#marketChart").innerHTML = `<div class="empty compact-empty">No data loaded.</div>`;
   $("#marketLegend").innerHTML = "";
-  $("#topMovers").innerHTML = `<div class="empty compact-empty">No data loaded.</div>`;
-  $("#cheapestRegions").innerHTML = `<div class="empty compact-empty">No data loaded.</div>`;
-  $("#providerSpread").innerHTML = `<div class="empty compact-empty">No data loaded.</div>`;
-  $("#commitmentDiscounts").innerHTML = `<div class="empty compact-empty">No data loaded.</div>`;
-  $("#ratesTable").innerHTML = `<tr><td colspan="6">No data loaded.</td></tr>`;
+  $("#ratesTable").innerHTML = `<tr><td colspan="4">No data loaded.</td></tr>`;
 }
 
 async function ensureDashboardRates() {
@@ -380,47 +373,6 @@ function latestRateMap(rates, cutoff = Infinity) {
     if (!current || time > observedTime(current)) latest.set(key, row);
   }
   return latest;
-}
-
-function previousRateMap(currentRows, allRates) {
-  const currentTimes = new Map(currentRows.map((row) => [rateKey(row), observedTime(row)]));
-  const previous = new Map();
-  for (const row of allRates) {
-    const key = rateKey(row);
-    if (!currentTimes.has(key)) continue;
-    const time = observedTime(row);
-    if (!Number.isFinite(time) || time >= currentTimes.get(key)) continue;
-    const existing = previous.get(key);
-    if (!existing || time > existing.time) previous.set(key, { row, time });
-  }
-  return new Map([...previous.entries()].map(([key, value]) => [key, value.row]));
-}
-
-function regionGroup(region = "") {
-  const value = region.toLowerCase();
-  if (value === "global" || value === "north america") return value === "global" ? "Global / Other" : "North America";
-  if (/^(us|ca|mx)-/.test(value) || value.includes("canada") || value.includes("eastus") || value.includes("westus") ||
-      value.includes("centralus") || value.includes("southcentralus") || value.includes("northcentralus") ||
-      value.includes("usgov") || value.includes("northamerica") || value.includes("mexico")) {
-    return "North America";
-  }
-  if (/^(eu|europe)-/.test(value) || value.includes("europe") || value.includes("northeurope") || value.includes("westeurope") ||
-      value.includes("uk") || value.includes("france") || value.includes("germany") || value.includes("norway") ||
-      value.includes("poland") || value.includes("spain") || value.includes("sweden") || value.includes("switzerland") ||
-      value.includes("italy")) {
-    return "Europe";
-  }
-  if (/^(ap|asia|australia)-/.test(value) || value.includes("eastasia") || value.includes("southeastasia") ||
-      value.includes("japan") || value.includes("korea") || value.includes("india") || value.includes("indonesia") ||
-      value.includes("malaysia") || value.includes("australia") || value.includes("jioindia")) {
-    return "Asia Pacific";
-  }
-  if (/^(me|africa)-/.test(value) || value.includes("uae") || value.includes("qatar") || value.includes("israel") ||
-      value.includes("southafrica")) {
-    return "Middle East & Africa";
-  }
-  if (/^(sa|southamerica)-/.test(value) || value.includes("brazil")) return "South America";
-  return "Global / Other";
 }
 
 function directIndexObservations(rows = filteredDirectRates({ defaultCommitment: "on-demand" })) {
@@ -685,7 +637,7 @@ function buildVisualData() {
     "market-index",
     "external-daily-market-index"
   ).filter((row) => new Date(row.observedAt) >= observationCutoff());
-  return { comparableHistory, currentRows, indexRows, allCommitments, spotChartRows, marketIndexRows };
+  return { currentRows, indexRows, spotChartRows, marketIndexRows };
 }
 
 function indexComparison(currentRow, indexRows, lookbackDays) {
@@ -727,163 +679,11 @@ function movementRows(currentRows, indexRows = []) {
   );
 }
 
-function topMoverRows(currentRows, allRates) {
-  const previousByKey = previousRateMap(currentRows, allRates);
-  return [...groupBy(currentRows, (row) => row.gpuModel).entries()].map(([gpuModel, rows]) => {
-    const pairs = rows
-      .map((current) => ({ current, previous: previousByKey.get(rateKey(current)) }))
-      .filter((pair) => pair.previous);
-    const currentPrice = providerBalancedPrice(pairs.map((pair) => pair.current));
-    const previousPrice = providerBalancedPrice(pairs.map((pair) => pair.previous));
-    return {
-      gpuModel,
-      pricePerGpuHour: currentPrice,
-      previousPrice,
-      deltaPercent: pctChange(currentPrice, previousPrice),
-      providerCount: new Set(pairs.map((pair) => pair.current.provider)).size,
-      observations: pairs.length
-    };
-  }).filter((row) => Number.isFinite(row.deltaPercent))
-    .toSorted((a, b) => Math.abs(b.deltaPercent) - Math.abs(a.deltaPercent))
-    .slice(0, 8);
-}
-
-function regionalHeatmapRows(currentRows) {
-  const gpuRows = [...groupBy(currentRows, (row) => row.gpuModel).entries()]
-    .toSorted((a, b) => priorityIndex(a[0]) - priorityIndex(b[0]) || a[0].localeCompare(b[0]))
-    .slice(0, 8);
-
-  return gpuRows.map(([gpuModel, rows]) => {
-    const modelMedian = providerBalancedPrice(rows);
-    const cells = Object.fromEntries(REGION_GROUPS.map((group) => {
-      const groupAverage = providerBalancedPrice(rows.filter((row) => regionGroup(row.region) === group));
-      return [group, {
-        averagePrice: groupAverage,
-        relativeToMedian: Number.isFinite(modelMedian) && Number.isFinite(groupAverage)
-          ? groupAverage / modelMedian
-          : null
-      }];
-    }));
-    const prices = Object.values(cells).map((cell) => cell.averagePrice).filter(Number.isFinite);
-    const minPrice = prices.length ? Math.min(...prices) : null;
-    const maxPrice = prices.length ? Math.max(...prices) : null;
-    for (const cell of Object.values(cells)) {
-      cell.priceScore = Number.isFinite(cell.averagePrice) && Number.isFinite(minPrice) && Number.isFinite(maxPrice)
-        ? maxPrice > minPrice
-          ? (cell.averagePrice - minPrice) / (maxPrice - minPrice)
-          : 0.5
-        : null;
-    }
-    return { gpuModel, cells };
-  });
-}
-
-function cheapestRegionRows(currentRows) {
-  return [...groupBy(currentRows, (row) => row.gpuModel).entries()]
-    .map(([gpuModel, rows]) => {
-      const regions = [...groupBy(rows, (row) => row.region).entries()].map(([region, regionRows]) => ({
-        region,
-        pricePerGpuHour: providerBalancedPrice(regionRows),
-        provider: "Provider-balanced index",
-        providerCount: new Set(regionRows.map((row) => row.provider)).size
-      }));
-      return {
-        gpuModel,
-        picks: regions.filter((row) => Number.isFinite(priceValue(row)))
-          .toSorted((a, b) => priceValue(a) - priceValue(b))
-          .slice(0, 3)
-      };
-    })
-    .filter((row) => row.picks.length)
-    .toSorted((a, b) => priorityIndex(a.gpuModel) - priorityIndex(b.gpuModel) || a.gpuModel.localeCompare(b.gpuModel))
-    .slice(0, 7);
-}
-
-function providerSpreadRows(currentRows) {
-  return [...groupBy(currentRows, (row) => row.gpuModel).entries()]
-    .map(([gpuModel, rows]) => {
-      const providers = [...groupBy(rows, (row) => row.provider).entries()]
-        .map(([provider, providerRows]) => ({
-          provider,
-          medianPrice: median(providerRows.map(priceValue))
-        }))
-        .filter((row) => Number.isFinite(row.medianPrice))
-        .toSorted((a, b) => a.medianPrice - b.medianPrice);
-      const low = providers[0];
-      const high = providers.at(-1);
-      return {
-        gpuModel,
-        providers,
-        low,
-        high,
-        rangePercent: low && high ? pctChange(high.medianPrice, low.medianPrice) : null
-      };
-    })
-    .filter((row) => row.providers.length >= 2)
-    .toSorted((a, b) =>
-      Math.abs(b.rangePercent || 0) - Math.abs(a.rangePercent || 0) ||
-      priorityIndex(a.gpuModel) - priorityIndex(b.gpuModel)
-    )
-    .slice(0, 7);
-}
-
-function commitmentDiscountRows(allRows) {
-  const latestRows = [...latestRateMap(allRows).values()];
-  return [...groupBy(latestRows, (row) => row.gpuModel).entries()]
-    .map(([gpuModel, rows]) => {
-      const onDemand = providerBalancedPrice(rows.filter((row) => row.commitment === "on-demand"));
-      const bestCommitted = [...groupBy(
-        rows.filter((row) => row.commitment !== "on-demand"),
-        (row) => row.commitment
-      ).entries()].map(([commitment, commitmentRows]) => ({
-        commitment,
-        provider: "Provider-balanced index",
-        pricePerGpuHour: providerBalancedPrice(commitmentRows)
-      })).filter((row) => Number.isFinite(priceValue(row)))
-        .toSorted((a, b) => priceValue(a) - priceValue(b))[0];
-      const discount = bestCommitted && Number.isFinite(onDemand)
-        ? (1 - priceValue(bestCommitted) / onDemand) * 100
-        : null;
-      return { gpuModel, onDemand, bestCommitted, discount };
-    })
-    .filter((row) => row.bestCommitted && Number.isFinite(row.discount))
-    .toSorted((a, b) => b.discount - a.discount || priorityIndex(a.gpuModel) - priorityIndex(b.gpuModel))
-    .slice(0, 7);
-}
-
-function heatScore(cell = {}) {
-  if (Number.isFinite(cell.priceScore)) return cell.priceScore;
-  if (!Number.isFinite(cell.relativeToMedian)) return null;
-  if (cell.relativeToMedian <= 0.85) return 0.1;
-  if (cell.relativeToMedian <= 0.95) return 0.3;
-  if (cell.relativeToMedian <= 1.05) return 0.5;
-  if (cell.relativeToMedian <= 1.15) return 0.7;
-  return 0.9;
-}
-
 function changeClass(value) {
   if (!Number.isFinite(value)) return "neutral";
   if (value < -1) return "down";
   if (value > 1) return "up";
   return "flat";
-}
-
-function heatClass(score) {
-  if (!Number.isFinite(score)) return "empty";
-  if (score <= 0.2) return "cheap-2";
-  if (score <= 0.4) return "cheap-1";
-  if (score <= 0.6) return "mid";
-  if (score <= 0.8) return "hot-1";
-  return "hot-2";
-}
-
-function heatLabel(score) {
-  if (!Number.isFinite(score)) return "No regional price";
-  if (score <= 0.2) return "Cheapest";
-  if (score <= 0.4) return "Lower priced";
-  if (score <= 0.6) return "Mid priced";
-  if (score <= 0.8) return "Higher priced";
-  return "Most expensive";
 }
 
 function renderHeroMetrics() {
@@ -927,93 +727,12 @@ function renderMovementMatrix(rows) {
   </div>` : `<div class="empty compact-empty">No comparable direct-rate rows match these filters.</div>`;
 }
 
-function renderRegionHeatmap(rows) {
-  $("#regionHeatmap").innerHTML = rows.length ? `<div class="heatmap-grid">
-    <div class="heatmap-head">GPU</div>
-    ${REGION_GROUPS.map((group) => `<div class="heatmap-head">${escapeHtml(group)}</div>`).join("")}
-    ${rows.map((row) => `
-      <div class="heatmap-gpu">${escapeHtml(row.gpuModel)}</div>
-      ${REGION_GROUPS.map((group) => {
-        const cell = row.cells[group];
-        const score = heatScore(cell);
-        const title = `${group} - ${heatLabel(score)}${Number.isFinite(cell.averagePrice) ? ` for ${row.gpuModel}: ${money(cell.averagePrice)}` : ""}`;
-        return `<div class="heat-cell ${heatClass(score)}" title="${escapeHtml(title)}">${formatMaybe(cell.averagePrice, money)}</div>`;
-      }).join("")}
-    `).join("")}
-  </div>` : `<div class="empty compact-empty">No regional rates match these filters.</div>`;
-}
-
-function renderTopMovers(rows) {
-  $("#topMovers").innerHTML = rows.length ? rows.map((row) => `<div class="mover-row ${changeClass(row.deltaPercent)}">
-    <div>
-      <strong>${escapeHtml(row.gpuModel)}</strong>
-      <span>Provider-balanced index · ${row.providerCount} providers</span>
-    </div>
-    <div class="mover-rate">
-      <span>${priceText(row.previousPrice)} -> ${priceText(row.pricePerGpuHour)}</span>
-      <strong>${percent(row.deltaPercent)}</strong>
-    </div>
-  </div>`).join("") : `<div class="empty compact-empty">No matched changes yet for the current filter set.</div>`;
-}
-
-function renderCheapestRegions(rows) {
-  $("#cheapestRegions").innerHTML = rows.length ? rows.map((row) => `<div class="cheap-row">
-    <strong>${escapeHtml(row.gpuModel)}</strong>
-    <div class="cheap-pills">
-      ${row.picks.map((pick) => `<span>
-        <b>${escapeHtml(pick.region)}</b>
-        ${priceText(pick.pricePerGpuHour)}
-        <small>${pick.providerCount} provider${pick.providerCount === 1 ? "" : "s"}</small>
-      </span>`).join("")}
-    </div>
-  </div>`).join("") : `<div class="empty compact-empty">No cheapest-region view available for these filters.</div>`;
-}
-
-function renderProviderSpread(rows) {
-  const maxRange = Math.max(1, ...rows.map((row) => Math.abs(row.rangePercent || 0)));
-  $("#providerSpread").innerHTML = rows.length ? rows.map((row) => {
-    const width = Math.max(8, Math.min(100, Math.abs(row.rangePercent || 0) / maxRange * 100));
-    return `<div class="spread-row">
-      <div class="spread-top">
-        <strong>${escapeHtml(row.gpuModel)}</strong>
-        <span>${money(row.low.medianPrice)} - ${money(row.high.medianPrice)}</span>
-      </div>
-      <div class="spread-track"><i style="width:${width}%"></i></div>
-      <small>${escapeHtml(row.low.provider)} low · ${escapeHtml(row.high.provider)} high · ${row.providers.length} providers</small>
-    </div>`;
-  }).join("") : `<div class="empty compact-empty">At least two providers are needed for a spread.</div>`;
-}
-
-function renderCommitmentDiscounts(rows) {
-  $("#commitmentDiscounts").innerHTML = rows.length ? rows.map((row) => {
-    const width = Math.max(6, Math.min(100, Math.abs(row.discount)));
-    const className = row.discount >= 0 ? "discount" : "premium";
-    return `<div class="discount-row ${className}">
-      <div>
-        <strong>${escapeHtml(row.gpuModel)}</strong>
-        <span>${escapeHtml(commitmentLabel(row.bestCommitted.commitment))} · ${escapeHtml(row.bestCommitted.provider)}</span>
-      </div>
-      <div class="discount-meter"><i style="width:${width}%"></i></div>
-      <b>${row.discount >= 0 ? `${row.discount.toFixed(1)}% off` : `${Math.abs(row.discount).toFixed(1)}% higher`}</b>
-    </div>`;
-  }).join("") : `<div class="empty compact-empty">No committed-rate pairs match these filters.</div>`;
-}
-
-function discountCandidateRows(rows) {
-  return rows.filter((row) => row.commitment !== "market-index" && row.sourceKind !== "market-index");
-}
-
 function renderVisualizations() {
-  const { comparableHistory, currentRows, indexRows, allCommitments, spotChartRows, marketIndexRows } = buildVisualData();
+  const { currentRows, indexRows, spotChartRows, marketIndexRows } = buildVisualData();
   renderHeroMetrics();
   renderMovementMatrix(movementRows(currentRows, indexRows));
   renderSpotChart(spotChartRows);
   renderMarketIndexChart(marketIndexRows);
-  renderRegionHeatmap(regionalHeatmapRows(currentRows));
-  renderTopMovers(topMoverRows(currentRows, comparableHistory));
-  renderCheapestRegions(cheapestRegionRows(currentRows));
-  renderProviderSpread(providerSpreadRows(currentRows));
-  renderCommitmentDiscounts(commitmentDiscountRows(discountCandidateRows(allCommitments)));
 }
 
 function isDefaultDashboardView() {
@@ -1030,11 +749,6 @@ function renderDashboardSummary(summary) {
   renderMovementMatrix(summary.movementRows);
   renderSpotChart(summary.spotChartRows);
   renderMarketIndexChart(summary.marketIndexRows);
-  renderRegionHeatmap(summary.heatmapRows);
-  renderTopMovers(summary.topMoverRows);
-  renderCheapestRegions(summary.cheapestRows);
-  renderProviderSpread(summary.providerSpreadRows);
-  renderCommitmentDiscounts(summary.commitmentRows);
   renderChart(summary.chartRows);
   renderTable(summary.tableRows);
 }
@@ -1047,11 +761,6 @@ function renderVisualizationLoadingPanels() {
   $("#spotLegend").innerHTML = "";
   $("#marketChart").innerHTML = loading;
   $("#marketLegend").innerHTML = "";
-  $("#regionHeatmap").innerHTML = loading;
-  $("#topMovers").innerHTML = loading;
-  $("#cheapestRegions").innerHTML = loading;
-  $("#providerSpread").innerHTML = loading;
-  $("#commitmentDiscounts").innerHTML = loading;
 }
 
 function renderLoadingPanels() {
@@ -1059,7 +768,7 @@ function renderLoadingPanels() {
   const loading = `<div class="empty compact-empty">Loading filtered data...</div>`;
   $("#chart").innerHTML = loading;
   $("#legend").innerHTML = "";
-  $("#ratesTable").innerHTML = `<tr><td colspan="6">Loading filtered data...</td></tr>`;
+  $("#ratesTable").innerHTML = `<tr><td colspan="4">Loading filtered data...</td></tr>`;
 }
 
 function render() {
@@ -1194,52 +903,55 @@ function attachTooltips(root = document) {
 }
 
 function renderSources() {
-  const observations = new Map(state.meta.providers.map((provider) => [provider.provider, provider]));
-  const indexCard = `<div class="source-card">
-    <div class="source-top"><span class="source-name">AIMultiple GPU Index</span><span class="badge">aggregate</span></div>
-    <div class="source-meta">${state.indexMeta.observationCount} monthly points · 10 models<br>Median-of-provider-medians · Jul 2024–Jun 2026</div>
-  </div>`;
-  const collectorCards = state.meta.catalog.map((source) => {
-    const tracked = observations.get(source.name);
-    const lastRun = state.meta.runs.find((run) => run.provider === source.id);
-    const status = lastRun?.status || (tracked ? "tracked" : source.defaultEnabled === false ? "optional" : "ready");
-    const sourceKind = source.archiveCapable
-      ? "Live + archive parser"
-      : source.defaultEnabled === false
-        ? "Optional connector"
-        : source.type === "neocloud"
-          ? "Public market API"
-          : "Official price API";
-    return `<div class="source-card">
-      <div class="source-top"><span class="source-name">${source.name}</span><span class="badge">${source.type}</span></div>
-      <div class="source-meta">${tracked?.observations || 0} direct observations · ${status}<br>${sourceKind}</div>
-    </div>`;
-  }).join("");
-  $("#sources").innerHTML = indexCard + collectorCards;
+  const catalog = state.meta.catalog || [];
+  const cloudProviders = catalog.filter((source) => source.type === "hyperscaler").length;
+  const marketplaces = catalog.filter((source) => source.type !== "hyperscaler").length;
+  const cards = [
+    ["Cloud providers", cloudProviders, "Official hyperscaler catalogs", "cloud"],
+    ["Market platforms", marketplaces, "Neocloud and marketplace feeds", "market"],
+    ["Direct price points", Number(state.meta.range?.count || 0).toLocaleString(), "Normalized observations", "data"],
+    ["Regions covered", state.meta.regions?.length || 0, "Across all active sources", "global"]
+  ];
+  $("#sources").innerHTML = cards.map(([label, value, detail, badge]) => `<div class="source-card">
+    <div class="source-top"><span class="source-name">${label}</span><span class="badge">${badge}</span></div>
+    <strong class="source-value">${value}</strong>
+    <div class="source-meta">${detail}</div>
+  </div>`).join("");
 }
 
 function renderRuns() {
-  const runs = state.meta.runs.slice(0, 8);
-  $("#runList").innerHTML = runs.length ? runs.map((run) => `<div class="run-row ${escapeHtml(run.status)}">
-    <div>
-      <strong>${escapeHtml(run.provider)}</strong>
-      <span>${run.finishedAt ? fullDate(run.finishedAt) : "Running"}</span>
-    </div>
-    <b>${escapeHtml(run.status)}</b>
-  </div>`).join("") : `<div class="empty compact-empty">Daily collection runs will appear here.</div>`;
+  const runs = state.meta.runs || [];
+  if (!runs.length) {
+    $("#runList").innerHTML = `<div class="empty compact-empty">Daily collection runs will appear here.</div>`;
+    return;
+  }
+  const successful = runs.filter((run) => run.status === "success").length;
+  const successRate = Math.round(successful / runs.length * 100);
+  const latest = runs
+    .filter((run) => run.finishedAt)
+    .toSorted((a, b) => new Date(b.finishedAt) - new Date(a.finishedAt))[0];
+  const healthy = successful === runs.length;
+  const summaries = [
+    ["Overall status", healthy ? "All systems operational" : "Review recent runs", healthy ? "normal" : "attention", healthy ? "" : "failed"],
+    ["Success rate", `${successRate}% of recent runs`, `${successful}/${runs.length}`, healthy ? "" : "failed"],
+    ["Last collection", latest ? fullDateTime(latest.finishedAt) : "Collection running", latest ? "complete" : "running", ""],
+    ["Tracked jobs", `${runs.length} recent collection jobs`, "active", ""]
+  ];
+  $("#runList").innerHTML = summaries.map(([label, detail, status, className]) => `<div class="run-row ${className}">
+    <div><strong>${label}</strong><span>${detail}</span></div><b>${status}</b>
+  </div>`).join("");
 }
 
 function renderTable(rows) {
   const latest = latestByModel(rows.filter((row) => Number.isFinite(priceValue(row))))
-    .toSorted((a, b) => priceValue(b) - priceValue(a));
+    .toSorted((a, b) => priceValue(b) - priceValue(a))
+    .slice(0, 6);
   $("#ratesTable").innerHTML = latest.map((row) => `<tr>
     <td><strong>${row.gpuModel}</strong></td>
-    <td>${groupLabels[row.group] || row.group}</td>
     <td>${shortDate(row.observedAt)}</td>
     <td class="rate">${priceText(row.pricePerGpuHour)}</td>
-    <td>${escapeHtml(aggregationText(row.aggregation))}${row.directObservationCount ? ` · ${row.directObservationCount} rows` : ""}</td>
     <td><button class="link-button" type="button" data-source-row='${JSON.stringify(row).replaceAll("'", "&#39;")}'>Inspect</button></td>
-  </tr>`).join("") || `<tr><td colspan="6">No matching observations.</td></tr>`;
+  </tr>`).join("") || `<tr><td colspan="4">No matching observations.</td></tr>`;
   document.querySelectorAll("[data-source-row]").forEach((button) => {
     button.addEventListener("click", () => showSourceDetails(JSON.parse(button.dataset.sourceRow)));
   });
@@ -1255,6 +967,19 @@ document.querySelectorAll("[data-months]").forEach((button) => {
     state.months = Number(button.dataset.months);
     render();
   });
+});
+
+$("#resetFilters").addEventListener("click", () => {
+  $("#gpuFilter").value = DEFAULT_GPU_COHORT;
+  $("#datasetFilter").value = "direct";
+  $("#providerFilter").value = "all";
+  $("#regionFilter").value = "all";
+  $("#commitmentFilter").value = "all";
+  state.months = 24;
+  document.querySelectorAll("[data-months]").forEach((button) => {
+    button.classList.toggle("active", Number(button.dataset.months) === 24);
+  });
+  render();
 });
 
 $("#closeSourceDialog").addEventListener("click", () => $("#sourceDialog").close());

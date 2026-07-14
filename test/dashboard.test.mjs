@@ -51,6 +51,11 @@ test("dashboard summary keeps first-load chart payload slim", () => {
   assert.equal(summary.chartRows.some((row) => row.gpuModel === "A100"), false);
   assert.equal(summary.chartRows.some((row) => "sourceName" in row), false);
   assert.equal(summary.chartRows.some((row) => "aggregation" in row), false);
+  assert.equal("heatmapRows" in summary, false);
+  assert.equal("topMoverRows" in summary, false);
+  assert.equal("cheapestRows" in summary, false);
+  assert.equal("providerSpreadRows" in summary, false);
+  assert.equal("commitmentRows" in summary, false);
 
   const h100 = summary.tableRows.find((row) => row.gpuModel === "H100");
   assert.equal(h100.directObservationCount, 2);
@@ -74,13 +79,6 @@ test("dashboard summary keeps first-load chart payload slim", () => {
     ]
   );
 
-  const h100Heatmap = summary.heatmapRows.find((row) => row.gpuModel === "H100");
-  assert.equal(h100Heatmap.cells["North America"].averagePrice, 4);
-  assert.equal(h100Heatmap.cells["North America"].relativeToMedian, 0.8);
-  assert.equal(h100Heatmap.cells["North America"].priceScore, 0);
-  assert.equal(h100Heatmap.cells.Europe.averagePrice, 6);
-  assert.equal(h100Heatmap.cells.Europe.relativeToMedian, 1.2);
-  assert.equal(h100Heatmap.cells.Europe.priceScore, 1);
 });
 
 test("dashboard graphics balance providers before combining prices", () => {
@@ -108,10 +106,6 @@ test("dashboard graphics balance providers before combining prices", () => {
       ["2026-06-28T00:00:00.000Z", 29]
     ]
   );
-
-  const heatmap = summary.heatmapRows.find((row) => row.gpuModel === "H100");
-  assert.equal(heatmap.cells["North America"].averagePrice, 52);
-  assert.equal(heatmap.cells.Europe.averagePrice, 6);
 });
 
 test("daily movement is anchored to the latest indexed day, not dashboard generation time", () => {

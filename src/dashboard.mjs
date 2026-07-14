@@ -6,7 +6,6 @@ const LOOKBACKS = [
   { key: "quarter", days: 90 },
   { key: "year", days: 365 }
 ];
-const REGION_GROUPS = ["North America", "Europe", "Asia Pacific", "Middle East & Africa", "South America", "Global / Other"];
 const GROUPS = {
   "last-released": ["B200", "B300", "MI300X", "RTX 5090", "GB200", "GB300"],
   modern: ["H100", "H200", "GH200", "A100", "L40S", "L40", "L4", "A10", "RTX 4090"],
@@ -83,25 +82,6 @@ function latestRateMap(rates, cutoff = Infinity) {
     if (!current || time > observedTime(current)) latest.set(key, row);
   }
   return latest;
-}
-
-function regionGroup(region = "") {
-  const value = region.toLowerCase();
-  if (value === "global" || value === "north america") return value === "global" ? "Global / Other" : "North America";
-  if (/^(us|ca|mx)-/.test(value) || value.includes("canada") || value.includes("eastus") || value.includes("westus") ||
-      value.includes("centralus") || value.includes("southcentralus") || value.includes("northcentralus") ||
-      value.includes("usgov") || value.includes("northamerica") || value.includes("mexico")) return "North America";
-  if (/^(eu|europe)-/.test(value) || value.includes("europe") || value.includes("northeurope") || value.includes("westeurope") ||
-      value.includes("uk") || value.includes("france") || value.includes("germany") || value.includes("norway") ||
-      value.includes("poland") || value.includes("spain") || value.includes("sweden") || value.includes("switzerland") ||
-      value.includes("italy")) return "Europe";
-  if (/^(ap|asia|australia)-/.test(value) || value.includes("eastasia") || value.includes("southeastasia") ||
-      value.includes("japan") || value.includes("korea") || value.includes("india") || value.includes("indonesia") ||
-      value.includes("malaysia") || value.includes("australia") || value.includes("jioindia")) return "Asia Pacific";
-  if (/^(me|africa)-/.test(value) || value.includes("uae") || value.includes("qatar") || value.includes("israel") ||
-      value.includes("southafrica")) return "Middle East & Africa";
-  if (/^(sa|southamerica)-/.test(value) || value.includes("brazil")) return "South America";
-  return "Global / Other";
 }
 
 function dayKey(date) {
@@ -245,144 +225,12 @@ function directDailyIndexObservations(rates, commitment = "spot", aggregation = 
   );
 }
 
-function previousRateMap(currentRows, allRates) {
-  const currentTimes = new Map(currentRows.map((row) => [rateKey(row), observedTime(row)]));
-  const previous = new Map();
-  for (const row of allRates) {
-    const key = rateKey(row);
-    if (!currentTimes.has(key)) continue;
-    const time = observedTime(row);
-    if (!Number.isFinite(time) || time >= currentTimes.get(key)) continue;
-    const existing = previous.get(key);
-    if (!existing || time > existing.time) previous.set(key, { row, time });
-  }
-  return new Map([...previous.entries()].map(([key, value]) => [key, value.row]));
-}
-
-function topMoverRows(currentRows, allRates) {
-  const previousByKey = previousRateMap(currentRows, allRates);
-  return [...groupBy(currentRows, (row) => row.gpuModel).entries()].map(([gpuModel, rows]) => {
-    const pairs = rows
-      .map((current) => ({ current, previous: previousByKey.get(rateKey(current)) }))
-      .filter((pair) => pair.previous);
-    const currentPrice = providerBalancedPrice(pairs.map((pair) => pair.current));
-    const previousPrice = providerBalancedPrice(pairs.map((pair) => pair.previous));
-    return {
-      gpuModel,
-      pricePerGpuHour: currentPrice,
-      previousPrice,
-      deltaPercent: pctChange(currentPrice, previousPrice),
-      providerCount: new Set(pairs.map((pair) => pair.current.provider)).size,
-      observations: pairs.length
-    };
-  }).filter((row) => Number.isFinite(row.deltaPercent))
-    .toSorted((a, b) => Math.abs(b.deltaPercent) - Math.abs(a.deltaPercent))
-    .slice(0, 8);
-}
-
-function regionalHeatmapRows(currentRows) {
-  return [...groupBy(currentRows, (row) => row.gpuModel).entries()]
-    .toSorted((a, b) => priorityIndex(a[0]) - priorityIndex(b[0]) || a[0].localeCompare(b[0]))
-    .slice(0, 8)
-    .map(([gpuModel, rows]) => {
-      const modelMedian = providerBalancedPrice(rows);
-      const cells = Object.fromEntries(REGION_GROUPS.map((group) => {
-        const groupAverage = providerBalancedPrice(rows.filter((row) => regionGroup(row.region) === group));
-        return [group, {
-          averagePrice: groupAverage,
-          relativeToMedian: Number.isFinite(modelMedian) && Number.isFinite(groupAverage)
-            ? groupAverage / modelMedian
-            : null
-        }];
-      }));
-      const prices = Object.values(cells).map((cell) => cell.averagePrice).filter(Number.isFinite);
-      const minPrice = prices.length ? Math.min(...prices) : null;
-      const maxPrice = prices.length ? Math.max(...prices) : null;
-      for (const cell of Object.values(cells)) {
-        cell.priceScore = Number.isFinite(cell.averagePrice) && Number.isFinite(minPrice) && Number.isFinite(maxPrice)
-          ? maxPrice > minPrice
-            ? (cell.averagePrice - minPrice) / (maxPrice - minPrice)
-            : 0.5
-          : null;
-      }
-      return { gpuModel, cells };
-    });
-}
-
-function cheapestRegionRows(currentRows) {
-  return [...groupBy(currentRows, (row) => row.gpuModel).entries()]
-    .map(([gpuModel, rows]) => {
-      const regions = [...groupBy(rows, (row) => row.region).entries()].map(([region, regionRows]) => ({
-        region,
-        pricePerGpuHour: providerBalancedPrice(regionRows),
-        provider: "Provider-balanced index",
-        providerCount: new Set(regionRows.map((row) => row.provider)).size
-      }));
-      return {
-        gpuModel,
-        picks: regions.filter((row) => Number.isFinite(priceValue(row)))
-          .toSorted((a, b) => priceValue(a) - priceValue(b))
-          .slice(0, 3)
-      };
-    })
-    .filter((row) => row.picks.length)
-    .toSorted((a, b) => priorityIndex(a.gpuModel) - priorityIndex(b.gpuModel) || a.gpuModel.localeCompare(b.gpuModel))
-    .slice(0, 7);
-}
-
-function providerSpreadRows(currentRows) {
-  return [...groupBy(currentRows, (row) => row.gpuModel).entries()]
-    .map(([gpuModel, rows]) => {
-      const providers = [...groupBy(rows, (row) => row.provider).entries()]
-        .map(([provider, providerRows]) => ({ provider, medianPrice: median(providerRows.map(priceValue)) }))
-        .filter((row) => Number.isFinite(row.medianPrice))
-        .toSorted((a, b) => a.medianPrice - b.medianPrice);
-      const low = providers[0];
-      const high = providers.at(-1);
-      return { gpuModel, providers, low, high, rangePercent: low && high ? pctChange(high.medianPrice, low.medianPrice) : null };
-    })
-    .filter((row) => row.providers.length >= 2)
-    .toSorted((a, b) => Math.abs(b.rangePercent || 0) - Math.abs(a.rangePercent || 0) || priorityIndex(a.gpuModel) - priorityIndex(b.gpuModel))
-    .slice(0, 7);
-}
-
-function commitmentDiscountRows(rows) {
-  return [...groupBy([...latestRateMap(rows).values()], (row) => row.gpuModel).entries()]
-    .map(([gpuModel, gpuRows]) => {
-      const onDemand = providerBalancedPrice(gpuRows.filter((row) => row.commitment === "on-demand"));
-      const bestCommitted = [...groupBy(
-        gpuRows.filter((row) => row.commitment !== "on-demand"),
-        (row) => row.commitment
-      ).entries()].map(([commitment, commitmentRows]) => ({
-        commitment,
-        provider: "Provider-balanced index",
-        pricePerGpuHour: providerBalancedPrice(commitmentRows)
-      })).filter((row) => Number.isFinite(priceValue(row)))
-        .toSorted((a, b) => priceValue(a) - priceValue(b))[0];
-      return {
-        gpuModel,
-        onDemand,
-        bestCommitted,
-        discount: bestCommitted && Number.isFinite(onDemand)
-          ? (1 - priceValue(bestCommitted) / onDemand) * 100
-          : null
-      };
-    })
-    .filter((row) => row.bestCommitted && Number.isFinite(row.discount))
-    .toSorted((a, b) => b.discount - a.discount || priorityIndex(a.gpuModel) - priorityIndex(b.gpuModel))
-    .slice(0, 7);
-}
-
 function latestPriceTimestamp(rates) {
   const validRows = rates.filter((row) => Number.isFinite(observedTime(row)) && Number.isFinite(priceValue(row)));
   const liveRows = validRows.filter((row) => row.sourceKind === "live");
   const sourceRows = liveRows.length ? liveRows : validRows.filter((row) => row.sourceKind !== "benchmark-seed");
   const rows = sourceRows.length ? sourceRows : validRows;
   return rows.toSorted((a, b) => observedTime(b) - observedTime(a))[0]?.observedAt || null;
-}
-
-function isDiscountCandidate(row) {
-  return row.commitment !== "market-index" && row.sourceKind !== "market-index";
 }
 
 export function buildDashboardSummary({ meta, rates, chartRates = rates, panelRates = rates, generatedAt = new Date() }) {
@@ -419,8 +267,6 @@ export function buildDashboardSummary({ meta, rates, chartRates = rates, panelRa
     group: row.group,
     pricePerGpuHour: row.pricePerGpuHour
   }));
-  const defaultPanelRates = directPanelRates.filter((row) => isDefaultGpu(row.gpuModel));
-
   return {
     freshness: { latestPricePull: latestPriceTimestamp(panelRates.length ? panelRates : rates) },
     hero: {
@@ -434,11 +280,6 @@ export function buildDashboardSummary({ meta, rates, chartRates = rates, panelRa
     movementRows: movementRows(currentRows, fullChartRows),
     spotChartRows,
     marketIndexRows,
-    spotMovementRows: movementRows(currentSpotRows, fullSpotChartRows),
-    heatmapRows: regionalHeatmapRows(currentRows),
-    topMoverRows: topMoverRows(currentRows, onDemandRows),
-    cheapestRows: cheapestRegionRows(currentRows),
-    providerSpreadRows: providerSpreadRows(currentRows),
-    commitmentRows: commitmentDiscountRows(defaultPanelRates.filter(isDiscountCandidate))
+    spotMovementRows: movementRows(currentSpotRows, fullSpotChartRows)
   };
 }

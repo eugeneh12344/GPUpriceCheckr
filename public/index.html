@@ -5,208 +5,184 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Track hyperscaler and neocloud GPU rental rates over time." />
     <title>GPU Rental Rate Index</title>
-    <link rel="stylesheet" href="/styles.css?v=20260706-market-feeds" />
+    <link rel="stylesheet" href="/styles.css?v=20260713-terminal-redesign" />
   </head>
   <body>
     <header class="topbar">
       <a class="brand" href="/">
-        <span class="brand-mark">G</span>
-        <span>GPU Rent Price</span>
+        <span>GPU Rental Rate Index</span>
       </a>
+      <nav class="topnav" aria-label="Primary navigation">
+        <a class="active" href="#dashboard">Dashboard</a>
+        <a href="#daily-index">Index</a>
+        <a href="#model-index">Models</a>
+        <a href="#sources-panel">Sources</a>
+        <a href="/api/dashboard">API</a>
+      </nav>
       <div class="top-actions">
         <span id="loadTime" class="load-time">Measuring load...</span>
         <span id="freshness" class="freshness">Loading dataset...</span>
       </div>
     </header>
 
-    <main class="app-shell">
-      <section class="dashboard-hero">
-        <div>
-          <p class="eyebrow">Daily GPU rental intelligence</p>
-          <h1>GPU Rent Price Console</h1>
-          <div class="hero-metrics" aria-label="Market coverage">
-            <div>
-              <span>Observations</span>
-              <strong id="heroRows">--</strong>
+    <main id="dashboard" class="app-shell">
+      <h1 class="sr-only">GPU Rental Rate Index dashboard</h1>
+      <div class="dashboard-layout">
+        <aside class="filter-rail" aria-label="Dashboard filters">
+          <section class="controls panel">
+            <div class="filter-heading">
+              <h2>Filters</h2>
+              <span aria-hidden="true">⌃</span>
             </div>
-            <div>
-              <span>GPU Models</span>
-              <strong id="heroGpus">--</strong>
+            <label>
+              <span>GPU category</span>
+              <select id="gpuFilter"></select>
+            </label>
+            <label>
+              <span>Index type</span>
+              <select id="datasetFilter">
+                <option value="direct">Collected source index</option>
+                <option value="aimultiple">AIMultiple benchmark</option>
+              </select>
+            </label>
+            <label>
+              <span>Provider</span>
+              <select id="providerFilter"></select>
+            </label>
+            <label>
+              <span>Region</span>
+              <select id="regionFilter"></select>
+            </label>
+            <label>
+              <span>Billing</span>
+              <select id="commitmentFilter"></select>
+            </label>
+            <div class="range-control">
+              <span>Date range</span>
+              <div class="segmented" aria-label="Date range">
+                <button data-months="6">6M</button>
+                <button data-months="12">1Y</button>
+                <button data-months="24" class="active">2Y</button>
+                <button data-months="0">All</button>
+              </div>
             </div>
-            <div>
-              <span>Regions</span>
-              <strong id="heroRegions">--</strong>
+            <button id="resetFilters" class="reset-button" type="button">Reset filters</button>
+          </section>
+
+          <section class="panel about-index">
+            <h2>About the index</h2>
+            <p>Daily provider-balanced GPU rental prices aggregated from global cloud providers and marketplaces.</p>
+            <a href="#sources-panel">View methodology →</a>
+          </section>
+        </aside>
+
+        <div class="dashboard-content">
+          <section class="dashboard-hero" aria-label="Market coverage">
+            <div class="hero-metrics" aria-label="Market coverage">
+              <div>
+                <span>Total observations</span>
+                <strong id="heroRows">--</strong>
+                <small>Normalized price points</small>
+              </div>
+              <div>
+                <span>Models indexed</span>
+                <strong id="heroGpus">--</strong>
+                <small>Across GPU generations</small>
+              </div>
+              <div>
+                <span>Regions covered</span>
+                <strong id="heroRegions">--</strong>
+                <small>Global cloud markets</small>
+              </div>
+              <div>
+                <span>Active sources</span>
+                <strong id="heroSources">--</strong>
+                <small>Providers and indexes</small>
+              </div>
             </div>
-            <div>
-              <span>Sources</span>
-              <strong id="heroSources">--</strong>
-            </div>
-          </div>
+          </section>
+
+          <section class="viz-grid" aria-label="GPU rental visualizations">
+            <article class="panel viz-panel trend-panel">
+              <div class="section-heading">
+                <div>
+                  <h2>Price trend</h2>
+                  <p id="chartTitle" class="panel-context">Cross-provider price by GPU model</p>
+                </div>
+                <div id="legend" class="legend"></div>
+              </div>
+              <div id="chart" class="chart" role="img" aria-label="Historical GPU rental price line chart"></div>
+            </article>
+
+            <article id="daily-index" class="panel viz-panel movement-panel">
+              <div class="section-heading compact">
+                <div>
+                  <h2>Current daily index</h2>
+                  <p class="panel-context">Provider-balanced index by chip</p>
+                </div>
+              </div>
+              <div id="movementTable" class="movement-table"></div>
+            </article>
+
+            <article class="panel viz-panel spot-panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Short-term market</p>
+                  <h2>Spot price movement</h2>
+                </div>
+                <div id="spotLegend" class="legend"></div>
+              </div>
+              <div id="spotChart" class="chart spot-chart" role="img" aria-label="Spot GPU rental price line chart"></div>
+            </article>
+
+            <article class="panel viz-panel market-panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">External index</p>
+                  <h2>Market price movement</h2>
+                </div>
+                <div id="marketLegend" class="legend"></div>
+              </div>
+              <div id="marketChart" class="chart market-chart" role="img" aria-label="External GPU market price index line chart"></div>
+            </article>
+          </section>
+
+          <section class="ops-grid">
+            <article id="sources-panel" class="panel source-panel">
+              <div class="section-heading compact">
+                <div>
+                  <p class="eyebrow">Collection network</p>
+                  <h2>Sources</h2>
+                </div>
+              </div>
+              <div id="sources" class="sources"></div>
+            </article>
+            <article class="panel schedule-panel">
+              <div class="section-heading compact">
+                <div>
+                  <p class="eyebrow">Automation</p>
+                  <h2>Collection status</h2>
+                </div>
+              </div>
+              <div id="runList" class="run-list"></div>
+            </article>
+            <article id="model-index" class="panel table-panel">
+              <div class="section-heading compact">
+                <div>
+                  <p class="eyebrow">Audit trail</p>
+                  <h2>Latest model index</h2>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>GPU</th><th>Observed</th><th>Rate</th><th>Source</th></tr></thead>
+                  <tbody id="ratesTable"></tbody>
+                </table>
+              </div>
+            </article>
+          </section>
         </div>
-      </section>
-
-      <section class="controls panel">
-        <label>
-          <span>GPU cohort</span>
-          <select id="gpuFilter"></select>
-        </label>
-        <label>
-          <span>Dataset</span>
-          <select id="datasetFilter">
-            <option value="direct">Collected source index</option>
-            <option value="aimultiple">AIMultiple benchmark</option>
-          </select>
-        </label>
-        <label>
-          <span>Provider</span>
-          <select id="providerFilter"></select>
-        </label>
-        <label>
-          <span>Region</span>
-          <select id="regionFilter"></select>
-        </label>
-        <label>
-          <span>Rate type</span>
-          <select id="commitmentFilter"></select>
-        </label>
-        <div class="segmented" aria-label="Date range">
-          <button data-months="6">6M</button>
-          <button data-months="12">1Y</button>
-          <button data-months="24" class="active">2Y</button>
-          <button data-months="0">All</button>
-        </div>
-      </section>
-
-      <section class="viz-grid" aria-label="GPU rental visualizations">
-        <article class="panel viz-panel trend-panel">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Price trend</p>
-              <h2 id="chartTitle">Cross-provider price by GPU model</h2>
-            </div>
-            <div id="legend" class="legend"></div>
-          </div>
-          <div id="chart" class="chart" role="img" aria-label="Historical GPU rental price line chart"></div>
-        </article>
-
-        <article class="panel viz-panel movement-panel">
-          <div class="section-heading compact">
-            <div>
-              <p class="eyebrow">Current daily index</p>
-              <h2>Provider-balanced index by chip</h2>
-            </div>
-          </div>
-          <div id="movementTable" class="movement-table"></div>
-        </article>
-
-        <article class="panel viz-panel spot-panel">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Short-term market</p>
-              <h2>Spot price movement</h2>
-            </div>
-            <div id="spotLegend" class="legend"></div>
-          </div>
-          <div id="spotChart" class="chart spot-chart" role="img" aria-label="Spot GPU rental price line chart"></div>
-        </article>
-
-        <article class="panel viz-panel market-panel">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">External index</p>
-              <h2>Market price movement</h2>
-            </div>
-            <div id="marketLegend" class="legend"></div>
-          </div>
-          <div id="marketChart" class="chart market-chart" role="img" aria-label="External GPU market price index line chart"></div>
-        </article>
-
-        <article class="panel viz-panel heatmap-panel">
-          <div class="section-heading compact">
-            <div>
-              <p class="eyebrow">Geography</p>
-              <h2>Regional heat map</h2>
-            </div>
-          </div>
-          <div id="regionHeatmap" class="heatmap"></div>
-        </article>
-
-        <article class="panel viz-panel movers-panel">
-          <div class="section-heading compact">
-            <div>
-              <p class="eyebrow">Momentum</p>
-              <h2>Top movers</h2>
-            </div>
-          </div>
-          <div id="topMovers" class="mover-list"></div>
-        </article>
-
-        <article class="panel viz-panel cheapest-panel">
-          <div class="section-heading compact">
-            <div>
-              <p class="eyebrow">Best markets</p>
-              <h2>Cheapest regions</h2>
-            </div>
-          </div>
-          <div id="cheapestRegions" class="cheap-list"></div>
-        </article>
-
-        <article class="panel viz-panel spread-panel">
-          <div class="section-heading compact">
-            <div>
-              <p class="eyebrow">Providers</p>
-              <h2>Spread by chip</h2>
-            </div>
-          </div>
-          <div id="providerSpread" class="spread-list"></div>
-        </article>
-
-        <article class="panel viz-panel commitment-panel">
-          <div class="section-heading compact">
-            <div>
-              <p class="eyebrow">Terms</p>
-              <h2>Commitment discount</h2>
-            </div>
-          </div>
-          <div id="commitmentDiscounts" class="discount-list"></div>
-        </article>
-      </section>
-
-      <section class="ops-grid">
-        <article class="panel source-panel">
-          <div class="section-heading compact">
-            <div>
-              <p class="eyebrow">Collection network</p>
-              <h2>Sources</h2>
-            </div>
-          </div>
-          <div id="sources" class="sources"></div>
-        </article>
-        <article class="panel schedule-panel">
-          <div class="section-heading compact">
-            <div>
-              <p class="eyebrow">Automation</p>
-              <h2>Collection status</h2>
-            </div>
-          </div>
-          <div id="runList" class="run-list"></div>
-        </article>
-      </section>
-
-      <section class="panel table-panel">
-        <div class="section-heading compact">
-          <div>
-            <p class="eyebrow">Audit trail</p>
-            <h2>Latest model index</h2>
-          </div>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>GPU</th><th>Cohort</th><th>Observed</th><th>Rate</th><th>Aggregation</th><th>Source</th></tr></thead>
-            <tbody id="ratesTable"></tbody>
-          </table>
-        </div>
-      </section>
+      </div>
     </main>
 
     <dialog id="sourceDialog" class="source-dialog" aria-labelledby="sourceDialogTitle">
@@ -221,6 +197,6 @@
     </dialog>
 
     <div id="toast" class="toast" aria-live="polite"></div>
-    <script type="module" src="/app.js?v=20260713-daily-change"></script>
+    <script type="module" src="/app.js?v=20260713-terminal-redesign"></script>
   </body>
 </html>
