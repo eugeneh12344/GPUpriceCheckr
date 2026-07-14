@@ -1,4 +1,5 @@
 import http from "node:http";
+import { randomUUID } from "node:crypto";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,6 +36,7 @@ let dashboardRatesCache = null;
 let dashboardRefreshPromise = null;
 let dashboardCacheGeneration = 0;
 let dashboardRefreshGeneration = -1;
+let dailyReportJob = null;
 markInterruptedRuns();
 seedBenchmarks();
 
@@ -204,6 +206,21 @@ async function api(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/model-index") {
     return json(req, res, 200, { metadata: modelIndexMetadata(), observations: modelIndex() });
   }
+  if (req.method === "GET" && url.pathname === "/api/daily-report/status") {
+    if (requireAuth(req, res)) return;
+    const jobId = url.searchParams.get("jobId");
+    if (!dailyReportJob || dailyReportJob.id !== jobId) {
+      return json(req, res, 404, { error: "Daily report job not found." });
+    }
+    return json(req, res, 200, {
+      jobId: dailyReportJob.id,
+      status: dailyReportJob.status,
+      startedAt: dailyReportJob.startedAt,
+      finishedAt: dailyReportJob.finishedAt,
+      ...(dailyReportJob.result ? { result: dailyReportJob.result } : {}),
+      ...(dailyReportJob.error ? { error: dailyReportJob.error } : {})
+    });
+  }
   if (req.method === "POST" && url.pathname === "/api/scrape") {
     if (requireAuth(req, res)) return;
     const input = await body(req);
@@ -233,14 +250,34 @@ async function api(req, res, url) {
     if (requireAuth(req, res)) return;
     const input = await body(req);
     if (input.async) {
+      if (dailyReportJob?.status === "running") {
+        return json(req, res, 202, { status: "running", jobId: dailyReportJob.id });
+      }
+      const job = {
+        id: randomUUID(),
+        status: "running",
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+        result: null,
+        error: null
+      };
+      dailyReportJob = job;
       runDailyReport({ ...input, async: undefined })
         .then((result) => {
+          job.status = "success";
+          job.result = result;
+          job.finishedAt = new Date().toISOString();
           clearDashboardCache();
           scheduleDashboardRefresh("daily-report");
           console.log(JSON.stringify({ dailyReport: result }));
         })
-        .catch((error) => console.error(JSON.stringify({ dailyReportError: error.message })));
-      return json(req, res, 202, { status: "started" });
+        .catch((error) => {
+          job.status = "failed";
+          job.error = error.message;
+          job.finishedAt = new Date().toISOString();
+          console.error(JSON.stringify({ dailyReportError: error.message }));
+        });
+      return json(req, res, 202, { status: "started", jobId: job.id });
     }
     const result = await runDailyReport(input);
     clearDashboardCache();

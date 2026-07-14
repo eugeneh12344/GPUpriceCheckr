@@ -59,7 +59,7 @@ For AWS spot movement, the same AWS credentials should also allow `ec2:DescribeS
 - `AWS_SPOT_INSTANCE_TYPES=p5.48xlarge,p5e.48xlarge`
 - `AWS_SPOT_HISTORY_DAYS=14`
 
-AWS catalog results are processed incrementally to keep memory bounded. `AWS_PRICE_PAGE_SIZE` controls the maximum products parsed at once and defaults to `50`. The daily cron waits for collection and email delivery to finish; `REPORT_TIMEOUT_MS` defaults to 50 minutes.
+AWS catalog results are processed incrementally to keep memory bounded. `AWS_PRICE_PAGE_SIZE` controls the maximum products parsed at once and defaults to `50`. The daily cron starts a tracked report job and polls it with short requests until collection and email delivery finish; `REPORT_TIMEOUT_MS` defaults to 50 minutes.
 
 AWS regions are collected with bounded concurrency so a full catalog refresh does not serialize every region. `AWS_REGION_CONCURRENCY` defaults to `4` and can be lowered if the AWS Pricing API throttles the account. Email delivery is capped by `EMAIL_TIMEOUT_MS`, which defaults to 30 seconds.
 
