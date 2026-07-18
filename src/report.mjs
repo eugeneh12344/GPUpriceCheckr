@@ -3,6 +3,9 @@ import { listReportRates } from "./db.mjs";
 import { sendEmail } from "./email.mjs";
 import { defaultProviderIds } from "./providers.mjs";
 
+const DAILY_REPORT_EMAIL_VERSION = "2026-07-18";
+const DASHBOARD_URL = process.env.PUBLIC_BASE_URL || "https://gpupricecheckr-i8kp.onrender.com";
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const ANALYSIS_COMMITMENT = "on-demand";
 const LOOKBACKS = [
@@ -274,36 +277,36 @@ function buildDigest({ scrapedRates, previousRates, changes, generatedAt }) {
 }
 
 function pctCellStyle(value) {
-  if (!Number.isFinite(value)) return "color:#7d827b;background:#f5f5ef;";
-  if (value < -1) return "color:#0f5f4a;background:#e7f4ee;";
-  if (value > 1) return "color:#9f3322;background:#f8e9e4;";
-  return "color:#4e554f;background:#f3f0df;";
+  if (!Number.isFinite(value)) return "color:#65717a;background:#111a1f;";
+  if (value < -1) return "color:#a7ed18;background:#17251b;";
+  if (value > 1) return "color:#ff8095;background:#29171d;";
+  return "color:#cbd3d8;background:#151f24;";
 }
 
 function heatCellStyle(ratio) {
-  if (!Number.isFinite(ratio)) return "background:#f5f5ef;color:#8a8f87;";
-  if (ratio <= 0.85) return "background:#cdebdc;color:#123e31;";
-  if (ratio <= 0.95) return "background:#e4f4eb;color:#123e31;";
-  if (ratio <= 1.05) return "background:#f3f0df;color:#343b34;";
-  if (ratio <= 1.15) return "background:#f7dcc4;color:#5b321a;";
-  return "background:#f0b6aa;color:#5c2018;";
+  if (!Number.isFinite(ratio)) return "background:#111a1f;color:#65717a;";
+  if (ratio <= 0.85) return "background:#1f3a22;color:#c8f66d;";
+  if (ratio <= 0.95) return "background:#192b20;color:#b8e961;";
+  if (ratio <= 1.05) return "background:#151f24;color:#dbe1e4;";
+  if (ratio <= 1.15) return "background:#35251a;color:#ffc27f;";
+  return "background:#3b1c24;color:#ff9aac;";
 }
 
 function renderMovementTable(rows) {
   const body = rows.map((row) => `<tr>
-    <td style="padding:8px;border-bottom:1px solid #e5e2d6;font-weight:700;">${htmlEscape(row.gpuModel)}</td>
-    <td style="padding:8px;border-bottom:1px solid #e5e2d6;text-align:right;">${formatMaybe(row.averagePrice, money)}</td>
-    <td style="padding:8px;border-bottom:1px solid #e5e2d6;text-align:right;">${row.observations}</td>
-    <td style="padding:8px;border-bottom:1px solid #e5e2d6;text-align:right;">${row.providerCount}</td>
+    <td style="padding:10px 8px;border-bottom:1px solid #263138;font-weight:700;color:#f0f3f5;">${htmlEscape(row.gpuModel)}</td>
+    <td style="padding:10px 8px;border-bottom:1px solid #263138;text-align:right;color:#a7ed18;font-weight:700;">${formatMaybe(row.averagePrice, money)}</td>
+    <td style="padding:10px 8px;border-bottom:1px solid #263138;text-align:right;color:#aab4ba;">${row.observations}</td>
+    <td style="padding:10px 8px;border-bottom:1px solid #263138;text-align:right;color:#aab4ba;">${row.providerCount}</td>
     ${LOOKBACKS.map((lookback) => {
       const change = row.comparisons[lookback.key]?.change;
-      return `<td style="padding:8px;border-bottom:1px solid #e5e2d6;text-align:right;${pctCellStyle(change)}">${formatMaybe(change, percent)}</td>`;
+      return `<td style="padding:10px 8px;border-bottom:1px solid #263138;text-align:right;${pctCellStyle(change)}">${formatMaybe(change, percent)}</td>`;
     }).join("")}
   </tr>`).join("");
 
-  return `<table cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;font-size:13px;">
+  return `<table cellpadding="0" cellspacing="0" role="presentation" style="width:100%;border-collapse:collapse;font-size:13px;background:#0e1519;border:1px solid #263138;">
     <thead>
-      <tr style="background:#171a17;color:#ffffff;">
+      <tr style="background:#151f24;color:#8e9aa3;">
         <th align="left" style="padding:8px;">GPU</th>
         <th align="right" style="padding:8px;">Index</th>
         <th align="right" style="padding:8px;">Rows</th>
@@ -311,7 +314,7 @@ function renderMovementTable(rows) {
         ${LOOKBACKS.map((lookback) => `<th align="right" style="padding:8px;">${lookback.label}</th>`).join("")}
       </tr>
     </thead>
-    <tbody>${body || `<tr><td colspan="9" style="padding:12px;color:#7d827b;">No on-demand rows collected in this run.</td></tr>`}</tbody>
+    <tbody>${body || `<tr><td colspan="9" style="padding:12px;color:#8e9aa3;">No on-demand rows collected in this run.</td></tr>`}</tbody>
   </table>`;
 }
 
@@ -322,43 +325,43 @@ function moverLabel(rate) {
 
 function renderMoverTable(title, rows) {
   const body = rows.map((rate) => `<tr>
-    <td style="padding:7px;border-bottom:1px solid #e5e2d6;font-weight:700;">${htmlEscape(rate.gpuModel)}</td>
-    <td style="padding:7px;border-bottom:1px solid #e5e2d6;text-align:right;">${rate.providerCount}</td>
-    <td style="padding:7px;border-bottom:1px solid #e5e2d6;text-align:right;">${formatMaybe(rate.previousPrice, money)}</td>
-    <td style="padding:7px;border-bottom:1px solid #e5e2d6;text-align:right;">${formatMaybe(rate.currentPrice, money)}</td>
-    <td style="padding:7px;border-bottom:1px solid #e5e2d6;text-align:right;${pctCellStyle(rate.deltaPercent)}">${percent(rate.deltaPercent)}</td>
+    <td style="padding:8px;border-bottom:1px solid #263138;font-weight:700;color:#f0f3f5;">${htmlEscape(rate.gpuModel)}</td>
+    <td style="padding:8px;border-bottom:1px solid #263138;text-align:right;color:#aab4ba;">${rate.providerCount}</td>
+    <td style="padding:8px;border-bottom:1px solid #263138;text-align:right;color:#aab4ba;">${formatMaybe(rate.previousPrice, money)}</td>
+    <td style="padding:8px;border-bottom:1px solid #263138;text-align:right;color:#f0f3f5;">${formatMaybe(rate.currentPrice, money)}</td>
+    <td style="padding:8px;border-bottom:1px solid #263138;text-align:right;${pctCellStyle(rate.deltaPercent)}">${percent(rate.deltaPercent)}</td>
   </tr>`).join("");
 
-  return `<h3 style="margin:18px 0 8px 0;font-size:15px;">${htmlEscape(title)}</h3>
-  <table cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;font-size:13px;">
-    <thead><tr style="background:#ede9d8;">
+  return `<h3 style="margin:18px 0 8px 0;font-size:14px;color:#dbe1e4;">${htmlEscape(title)}</h3>
+  <table cellpadding="0" cellspacing="0" role="presentation" style="width:100%;border-collapse:collapse;font-size:13px;background:#0e1519;border:1px solid #263138;">
+    <thead><tr style="background:#151f24;color:#8e9aa3;">
       <th align="left" style="padding:7px;">GPU</th>
       <th align="right" style="padding:7px;">Providers</th>
       <th align="right" style="padding:7px;">Was</th>
       <th align="right" style="padding:7px;">Now</th>
       <th align="right" style="padding:7px;">Move</th>
     </tr></thead>
-    <tbody>${body || `<tr><td colspan="5" style="padding:10px;color:#7d827b;">No matched on-demand index rows.</td></tr>`}</tbody>
+    <tbody>${body || `<tr><td colspan="5" style="padding:10px;color:#8e9aa3;">No matched on-demand index rows.</td></tr>`}</tbody>
   </table>`;
 }
 
 function renderHeatmap(rows) {
   const body = rows.map((row) => `<tr>
-    <td style="padding:8px;border-bottom:1px solid #e5e2d6;font-weight:700;">${htmlEscape(row.gpuModel)}</td>
+    <td style="padding:8px;border-bottom:1px solid #263138;font-weight:700;color:#f0f3f5;">${htmlEscape(row.gpuModel)}</td>
     ${REGION_GROUPS.map((group) => {
       const cell = row.cells[group];
-      return `<td style="padding:8px;border-bottom:1px solid #e5e2d6;text-align:center;${heatCellStyle(cell.relativeToMedian)}">${formatMaybe(cell.averagePrice, money)}</td>`;
+      return `<td style="padding:8px;border-bottom:1px solid #263138;text-align:center;${heatCellStyle(cell.relativeToMedian)}">${formatMaybe(cell.averagePrice, money)}</td>`;
     }).join("")}
   </tr>`).join("");
 
-  return `<table cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;font-size:12px;">
-    <thead><tr style="background:#171a17;color:#ffffff;">
+  return `<table cellpadding="0" cellspacing="0" role="presentation" style="width:100%;border-collapse:collapse;font-size:12px;background:#0e1519;border:1px solid #263138;">
+    <thead><tr style="background:#151f24;color:#8e9aa3;">
       <th align="left" style="padding:8px;">GPU</th>
       ${REGION_GROUPS.map((group) => `<th align="center" style="padding:8px;">${htmlEscape(group)}</th>`).join("")}
     </tr></thead>
-    <tbody>${body || `<tr><td colspan="7" style="padding:12px;color:#7d827b;">No regional on-demand rows collected.</td></tr>`}</tbody>
+    <tbody>${body || `<tr><td colspan="7" style="padding:12px;color:#8e9aa3;">No regional on-demand rows collected.</td></tr>`}</tbody>
   </table>
-  <p style="margin:8px 0 0 0;color:#6d746d;font-size:12px;">Cells use the provider-balanced index and are colored relative to each GPU's index: green is cheaper, red is more expensive.</p>`;
+  <p style="margin:8px 0 0 0;color:#8e9aa3;font-size:12px;">Cells use the provider-balanced index and are colored relative to each GPU's index: green is cheaper, red is more expensive.</p>`;
 }
 
 function renderTrendChart(trend) {
@@ -382,13 +385,13 @@ function renderTrendChart(trend) {
   const ticks = [0, 0.5, 1].map((ratio) => yMin + (yMax - yMin) * ratio);
   const grid = ticks.map((tick) => {
     const y = yFor(tick);
-    return `<line x1="${margin.left}" y1="${y.toFixed(1)}" x2="${width - margin.right}" y2="${y.toFixed(1)}" stroke="#e5e2d6" />
-      <text x="${margin.left - 8}" y="${(y + 4).toFixed(1)}" text-anchor="end" font-size="11" fill="#6d746d">${money(tick)}</text>`;
+    return `<line x1="${margin.left}" y1="${y.toFixed(1)}" x2="${width - margin.right}" y2="${y.toFixed(1)}" stroke="#263138" />
+      <text x="${margin.left - 8}" y="${(y + 4).toFixed(1)}" text-anchor="end" font-size="11" fill="#8e9aa3">${money(tick)}</text>`;
   }).join("");
   const labelInterval = Math.max(1, Math.ceil(trend.days.length / 6));
   const dayLabels = trend.days.map((day, index) => {
     if (index % labelInterval && index !== trend.days.length - 1) return "";
-    return `<text x="${xFor(index).toFixed(1)}" y="${height - 16}" text-anchor="middle" font-size="10" fill="#6d746d">${htmlEscape(day.slice(5))}</text>`;
+    return `<text x="${xFor(index).toFixed(1)}" y="${height - 16}" text-anchor="middle" font-size="10" fill="#8e9aa3">${htmlEscape(day.slice(5))}</text>`;
   }).join("");
   const polylines = trend.series.map((series) => {
     const points = series.values
@@ -397,54 +400,65 @@ function renderTrendChart(trend) {
     if (points.length < 2) return "";
     return `<polyline points="${points.join(" ")}" fill="none" stroke="${series.color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />`;
   }).join("");
-  const legend = trend.series.map((series) => `<span style="display:inline-block;margin:0 14px 6px 0;font-size:12px;color:#343b34;">
+  const legend = trend.series.map((series) => `<span style="display:inline-block;margin:0 14px 6px 0;font-size:12px;color:#cbd3d8;">
     <span style="display:inline-block;width:10px;height:10px;background:${series.color};border-radius:10px;margin-right:5px;"></span>${htmlEscape(series.gpuModel)}
   </span>`).join("");
 
-  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="GPU provider-balanced price index trend over time" style="max-width:100%;height:auto;border:1px solid #e5e2d6;background:#fffefa;">
-    <rect width="${width}" height="${height}" fill="#fffefa" />
+  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="GPU provider-balanced price index trend over time" style="max-width:100%;height:auto;border:1px solid #263138;background:#0e1519;">
+    <rect width="${width}" height="${height}" fill="#0e1519" />
     ${grid}
     ${polylines}
     ${dayLabels}
-    <text x="${margin.left}" y="16" font-size="12" fill="#343b34">Daily provider-balanced on-demand index per GPU-hour</text>
+    <text x="${margin.left}" y="16" font-size="12" fill="#cbd3d8">Daily provider-balanced on-demand index per GPU-hour</text>
   </svg>
   <div style="margin-top:8px;">${legend}</div>`;
 }
 
 function renderHtml({ digest, failures, generatedAt, results, collected }) {
   const failuresHtml = failures.length
-    ? `<h2 style="font-size:18px;margin:24px 0 8px 0;">Needs attention</h2><ul>${failures.map((failure) =>
+    ? `<h2 style="font-size:18px;margin:28px 0 10px;color:#f0f3f5;">Needs attention</h2><ul style="color:#ff8095;">${failures.map((failure) =>
       `<li>${htmlEscape(failure.provider)}: ${htmlEscape(failure.message)}</li>`
     ).join("")}</ul>`
     : "";
   const successfulProviders = results.filter((result) => result.status === "success").length;
-  const cardStyle = "padding:12px;border:1px solid #e0dccf;background:#fffefa;";
+  const cardStyle = "padding:14px;border:1px solid #263138;background:#111a1f;";
+  const sectionStyle = "font-size:18px;margin:30px 0 10px;color:#f0f3f5;letter-spacing:-0.01em;";
 
   return `<!doctype html>
-  <html>
-    <body style="margin:0;padding:0;background:#f7f5ec;font-family:Arial,sans-serif;color:#171a17;">
-      <div style="max-width:760px;margin:0 auto;padding:24px;">
-        <h1 style="margin:0 0 6px 0;font-size:26px;">GPU rental rate daily report</h1>
-        <p style="margin:0 0 18px 0;color:#5f665f;">Generated ${htmlEscape(generatedAt)}. All cross-provider prices use the median of provider-level medians.</p>
+  <html lang="en">
+    <head><meta name="color-scheme" content="dark"><meta name="supported-color-schemes" content="dark"></head>
+    <body style="margin:0;padding:0;background:#070c0f;font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;color:#f0f3f5;">
+      <div style="display:none;max-height:0;overflow:hidden;opacity:0;">Today's provider-balanced GPU rental price index and market movement.</div>
+      <div style="max-width:760px;margin:0 auto;padding:28px 20px 40px;">
+        <table cellpadding="0" cellspacing="0" role="presentation" style="width:100%;margin-bottom:26px;border-bottom:1px solid #263138;">
+          <tr>
+            <td style="padding:0 0 16px;color:#ffffff;font-size:20px;font-weight:800;letter-spacing:-0.02em;">GPU Rental Rate Index</td>
+            <td align="right" style="padding:0 0 16px;color:#a7ed18;font-size:11px;font-weight:750;text-transform:uppercase;letter-spacing:0.08em;">Daily market brief</td>
+          </tr>
+        </table>
+        <p style="margin:0 0 7px;color:#a7ed18;font-size:11px;font-weight:750;text-transform:uppercase;letter-spacing:0.1em;">Provider-balanced pricing</p>
+        <h1 style="margin:0 0 8px;font-size:30px;line-height:1.15;letter-spacing:-0.03em;color:#ffffff;">Daily GPU market snapshot</h1>
+        <p style="margin:0 0 22px;color:#8e9aa3;line-height:1.55;">Generated ${htmlEscape(generatedAt)}. Cross-provider prices use the median of provider-level medians.</p>
         <table cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border-spacing:8px;margin:0 -8px 18px -8px;">
           <tr>
-            <td style="${cardStyle}"><strong style="font-size:20px;">${collected}</strong><br><span style="color:#6d746d;">rows collected</span></td>
-            <td style="${cardStyle}"><strong style="font-size:20px;">${digest.movementRows.length}</strong><br><span style="color:#6d746d;">GPU models</span></td>
-            <td style="${cardStyle}"><strong style="font-size:20px;">${successfulProviders}/${results.length}</strong><br><span style="color:#6d746d;">sources succeeded</span></td>
-            <td style="${cardStyle}"><strong style="font-size:20px;">${digest.movers.newRows}</strong><br><span style="color:#6d746d;">new rows</span></td>
+            <td style="${cardStyle}"><strong style="font-size:22px;color:#ffffff;">${collected}</strong><br><span style="color:#8e9aa3;font-size:12px;">rows collected</span></td>
+            <td style="${cardStyle}"><strong style="font-size:22px;color:#ffffff;">${digest.movementRows.length}</strong><br><span style="color:#8e9aa3;font-size:12px;">GPU models</span></td>
+            <td style="${cardStyle}"><strong style="font-size:22px;color:#a7ed18;">${successfulProviders}/${results.length}</strong><br><span style="color:#8e9aa3;font-size:12px;">sources succeeded</span></td>
+            <td style="${cardStyle}"><strong style="font-size:22px;color:#ffffff;">${digest.movers.newRows}</strong><br><span style="color:#8e9aa3;font-size:12px;">new rows</span></td>
           </tr>
         </table>
         ${failuresHtml}
-        <h2 style="font-size:18px;margin:24px 0 8px 0;">Provider-Balanced Index By GPU</h2>
+        <h2 style="${sectionStyle}">Current daily index</h2>
         ${renderMovementTable(digest.movementRows)}
-        <h2 style="font-size:18px;margin:24px 0 8px 0;">Top Movers</h2>
+        <h2 style="${sectionStyle}">Top movers</h2>
         ${renderMoverTable("Biggest price drops", digest.movers.drops)}
         ${renderMoverTable("Biggest price increases", digest.movers.increases)}
-        <h2 style="font-size:18px;margin:24px 0 8px 0;">Regional Price Heatmap</h2>
+        <h2 style="${sectionStyle}">Regional price heatmap</h2>
         ${renderHeatmap(digest.heatmapRows)}
-        <h2 style="font-size:18px;margin:24px 0 8px 0;">Price Trend</h2>
+        <h2 style="${sectionStyle}">Price trend</h2>
         ${renderTrendChart(digest.trend)}
-        <p style="margin:24px 0 0 0;color:#6d746d;font-size:12px;">This digest aggregates direct collected observations. Committed and reserved prices are stored in the app and available through filters, but omitted here to keep the morning email readable.</p>
+        <p style="margin:28px 0 0;"><a href="${htmlEscape(DASHBOARD_URL)}" style="display:inline-block;padding:11px 16px;background:#a7ed18;color:#0a0f0c;text-decoration:none;font-size:13px;font-weight:800;border-radius:4px;">Open live dashboard</a></p>
+        <p style="margin:28px 0 0;padding-top:18px;border-top:1px solid #263138;color:#65717a;font-size:11px;line-height:1.55;">Direct collected observations only. Committed and reserved prices remain available through dashboard filters. Email template ${DAILY_REPORT_EMAIL_VERSION}.</p>
       </div>
     </body>
   </html>`;
@@ -487,7 +501,7 @@ export async function runDailyReport(options = {}) {
   const changes = enrichChanges(scrapedRates, before);
   const failures = results.filter((result) => result.status === "failed");
   const digest = buildDigest({ scrapedRates, previousRates: before, changes, generatedAt });
-  const subject = `GPU rates: ${digest.movementRows.length} GPUs, ${scrapedRates.length} rows collected, ${failures.length} failures`;
+  const subject = `GPU Rental Rate Index daily: ${digest.movementRows.length} GPUs, ${failures.length} failures`;
   const text = renderText({ digest, failures, generatedAt, collected: scrapedRates.length });
   const html = renderHtml({
     digest,
@@ -500,7 +514,7 @@ export async function runDailyReport(options = {}) {
     subject,
     text,
     html,
-    idempotencyKey: `gpu-rate-daily-${generatedAt.slice(0, 10)}`
+    idempotencyKey: `gpu-rate-daily-${DAILY_REPORT_EMAIL_VERSION}-${generatedAt.slice(0, 10)}`
   });
 
   return {

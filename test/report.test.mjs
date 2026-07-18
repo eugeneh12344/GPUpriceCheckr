@@ -58,9 +58,14 @@ test("daily report digest summarizes movement and new rows", () => {
     results: [{ provider: "googleCloud", status: "success", records: 2 }],
     collected: scrapedRates.length
   });
-  assert.match(html, /Provider-Balanced Index By GPU/);
-  assert.match(html, /Regional Price Heatmap/);
-  assert.match(html, /Price Trend/);
+  assert.match(html, /GPU Rental Rate Index/);
+  assert.match(html, /Daily GPU market snapshot/);
+  assert.match(html, /Current daily index/);
+  assert.match(html, /Regional price heatmap/);
+  assert.match(html, /Price trend/);
+  assert.match(html, /Email template 2026-07-18/);
+  assert.match(html, /Open live dashboard/);
+  assert.match(html, /background:#070c0f/);
   assert.doesNotMatch(html, /Collected rates<\/h2>/);
 });
 
